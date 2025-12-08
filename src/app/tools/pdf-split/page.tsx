@@ -3,10 +3,9 @@
 import { useState } from "react"
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/Card"
 import { Button } from "@/components/ui/Button"
-import { FileText, Upload, Download, Scissors, ArrowLeft, Sparkles, GripVertical, Eye, Trash2, ZoomIn } from "lucide-react"
+import { FileText, Upload, Download, Scissors, ArrowLeft, Sparkles, GripVertical, Check } from "lucide-react"
 import { useDropzone } from "react-dropzone"
 import { PDFDocument } from "pdf-lib"
-import { PDFViewer } from "@/components/pdf/PDFViewer"
 import { formatFileSize } from "@/lib/utils"
 import JSZip from "jszip"
 import { saveAs } from "file-saver"
@@ -26,7 +25,7 @@ import {
   SortableContext,
   sortableKeyboardCoordinates,
   useSortable,
-  verticalListSortingStrategy,
+  rectSortingStrategy,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 
@@ -36,18 +35,12 @@ interface PageInfo {
   selected: boolean
 }
 
-function SortablePage({ 
+function SortablePageCard({ 
   page, 
-  onToggle, 
-  onRemove, 
-  onPreview,
-  isPreviewPage 
+  onToggle,
 }: { 
   page: PageInfo
   onToggle: () => void
-  onRemove: () => void
-  onPreview: () => void
-  isPreviewPage: boolean
 }) {
   const {
     attributes,
@@ -55,95 +48,83 @@ function SortablePage({
     setNodeRef,
     transform,
     transition,
+    isDragging,
   } = useSortable({ id: page.id })
 
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
+    opacity: isDragging ? 0.5 : 1,
   }
 
   return (
-    <div
+    <motion.div
       ref={setNodeRef}
       style={style}
+      initial={{ opacity: 0, scale: 0.9 }}
+      animate={{ opacity: 1, scale: 1 }}
+      transition={{ delay: (page.pageNumber - 1) * 0.02 }}
       className={`
-        group relative p-4 rounded-xl border-2 transition-all cursor-pointer
+        relative group cursor-pointer rounded-xl border-2 transition-all overflow-hidden
         ${page.selected 
-          ? 'bg-[var(--primary-500)]/10 border-[var(--primary-500)]' 
-          : isPreviewPage
-          ? 'bg-emerald-500/10 border-emerald-500'
-          : 'glass border-[var(--glass-border)] hover:border-[var(--primary-500)]/30'
+          ? 'border-[var(--primary-500)] ring-2 ring-[var(--primary-500)]/20 shadow-lg' 
+          : 'border-[var(--border-default)] hover:border-[var(--primary-500)]/50'
         }
       `}
-      onClick={onPreview}
+      onClick={onToggle}
     >
-      <div className="flex items-center gap-3">
-        {/* Drag Handle */}
-        <button
-          {...attributes}
-          {...listeners}
-          className="p-2 rounded-lg hover:bg-[var(--bg-surface)] cursor-grab active:cursor-grabbing"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <GripVertical className="w-5 h-5 text-[var(--text-muted)]" />
-        </button>
+      {/* Drag Handle */}
+      <div 
+        {...attributes}
+        {...listeners}
+        className="absolute top-2 left-2 p-2 rounded-lg bg-black/60 backdrop-blur-sm cursor-grab active:cursor-grabbing z-10 opacity-0 group-hover:opacity-100 transition-opacity"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <GripVertical className="w-4 h-4 text-white" />
+      </div>
 
-        {/* Checkbox */}
-        <input
-          type="checkbox"
-          checked={page.selected}
-          onChange={onToggle}
-          onClick={(e) => e.stopPropagation()}
-          className="w-5 h-5 accent-[var(--primary-500)] rounded cursor-pointer"
-        />
-        
-        {/* Info */}
-        <div className="flex-1">
-          <p className="font-semibold text-[var(--text-primary)] flex items-center gap-2">
-            หน้า {page.pageNumber}
-            {isPreviewPage && (
-              <span className="text-xs bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 px-2 py-1 rounded">
-                กำลังดู
-              </span>
-            )}
-          </p>
-          <p className="text-xs text-[var(--text-muted)]">
-            {page.selected ? '✓ เลือกแล้ว' : 'คลิกเพื่อดู'}
-          </p>
-        </div>
-
-        {/* Actions */}
-        <div className="flex items-center gap-1">
-          <button
-            onClick={(e) => {
-              e.stopPropagation()
-              onPreview()
-            }}
-            className="p-2 rounded-lg hover:bg-[var(--primary-500)]/10 text-[var(--primary-500)] transition-colors"
-            title="ดู Preview"
-          >
-            <Eye className="w-4 h-4" />
-          </button>
-          <button
-            onClick={(e) => {
-              e.stopPropagation()
-              onRemove()
-            }}
-            className="p-2 rounded-lg hover:bg-[var(--error)]/10 text-[var(--text-muted)] hover:text-[var(--error)] transition-colors opacity-0 group-hover:opacity-100"
-            title="ลบหน้านี้"
-          >
-            <Trash2 className="w-4 h-4" />
-          </button>
+      {/* Checkbox */}
+      <div className="absolute top-2 right-2 z-10">
+        <div className={`
+          w-6 h-6 rounded-md border-2 flex items-center justify-center transition-all
+          ${page.selected 
+            ? 'bg-[var(--primary-500)] border-[var(--primary-500)]' 
+            : 'bg-white/90 border-gray-300 group-hover:border-[var(--primary-500)]'
+          }
+        `}>
+          {page.selected && <Check className="w-4 h-4 text-white" strokeWidth={3} />}
         </div>
       </div>
-    </div>
+
+      {/* Page Preview */}
+      <div className="aspect-[3/4] bg-white p-4 flex flex-col items-center justify-center">
+        <FileText className="w-16 h-16 text-[var(--text-muted)] mb-3" />
+        <p className="font-bold text-2xl text-[var(--text-primary)]">
+          {page.pageNumber}
+        </p>
+        <p className="text-xs text-[var(--text-muted)] mt-1">
+          หน้า {page.pageNumber}
+        </p>
+      </div>
+
+      {/* Page Number Badge */}
+      <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-3">
+        <p className="text-white font-semibold text-center text-sm">
+          หน้า {page.pageNumber}
+        </p>
+      </div>
+
+      {/* Selected Overlay */}
+      {page.selected && (
+        <div className="absolute inset-0 bg-[var(--primary-500)]/10 pointer-events-none" />
+      )}
+    </motion.div>
   )
 }
 
 export default function PDFSplitPage() {
   const [pdfFile, setPdfFile] = useState<File | null>(null)
   const [pages, setPages] = useState<PageInfo[]>([])
-  const [currentPreviewPage, setCurrentPreviewPage] = useState(1)
   const [splitting, setSplitting] = useState(false)
   const [splitMode, setSplitMode] = useState<'selected' | 'individual'>('selected')
 
@@ -165,7 +146,6 @@ export default function PDFSplitPage() {
       const pdfDoc = await PDFDocument.load(arrayBuffer)
       const pageCount = pdfDoc.getPageCount()
 
-      // Create page info
       const pageInfos: PageInfo[] = []
       for (let i = 0; i < pageCount; i++) {
         pageInfos.push({
@@ -176,7 +156,6 @@ export default function PDFSplitPage() {
       }
 
       setPages(pageInfos)
-      setCurrentPreviewPage(1)
     } catch (error) {
       console.error('Error reading PDF:', error)
       alert('ไม่สามารถอ่านไฟล์ PDF ได้ กรุณาลองไฟล์อื่น')
@@ -209,17 +188,6 @@ export default function PDFSplitPage() {
     setPages(updated)
   }
 
-  const removePage = (index: number) => {
-    const removedPage = pages[index]
-    const newPages = pages.filter((_, i) => i !== index)
-    setPages(newPages)
-    
-    // Adjust preview page if needed
-    if (currentPreviewPage === removedPage.pageNumber) {
-      setCurrentPreviewPage(newPages.length > 0 ? newPages[0].pageNumber : 1)
-    }
-  }
-
   const selectAll = () => {
     setPages(pages.map(p => ({ ...p, selected: true })))
   }
@@ -238,7 +206,6 @@ export default function PDFSplitPage() {
       const pdfDoc = await PDFDocument.load(arrayBuffer)
 
       if (splitMode === 'selected') {
-        // Create one PDF with selected pages in order
         const selectedPages = pages.filter(p => p.selected)
         if (selectedPages.length === 0) {
           alert('กรุณาเลือกหน้าที่ต้องการ')
@@ -256,7 +223,6 @@ export default function PDFSplitPage() {
         const blob = new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' })
         saveAs(blob, `split-${pdfFile.name}`)
       } else {
-        // Split into individual PDFs
         const zip = new JSZip()
         const selectedPages = pages.filter(p => p.selected)
 
@@ -287,7 +253,7 @@ export default function PDFSplitPage() {
 
   return (
     <div className="min-h-screen py-24 px-4">
-      <div className="container mx-auto max-w-[1600px]">
+      <div className="container mx-auto max-w-[1800px]">
         {/* Back Button */}
         <motion.div
           initial={{ opacity: 0, x: -20 }}
@@ -314,7 +280,7 @@ export default function PDFSplitPage() {
                 แยก PDF
               </h1>
               <p className="text-[var(--text-secondary)] mt-1">
-                ดู Preview ขนาดใหญ่ จัดเรียงหน้า และแยก PDF
+                ดู Preview ทุกหน้า จัดเรียง และแยก PDF
               </p>
             </div>
           </div>
@@ -369,167 +335,121 @@ export default function PDFSplitPage() {
             </Card>
           </motion.div>
         ) : (
-          // Main Content: Preview + Pages List
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            {/* Left: Large Preview */}
-            <div className="lg:col-span-8">
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.1 }}
-              >
-                <Card variant="glass">
-                  <CardHeader>
-                    <div className="flex items-center justify-between">
+          <div className="space-y-6">
+            {/* Controls */}
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+            >
+              <Card variant="glass">
+                <CardContent className="py-4">
+                  <div className="flex flex-wrap items-center justify-between gap-4">
+                    {/* File Info */}
+                    <div className="flex items-center gap-3">
+                      <div className="w-12 h-12 rounded-xl bg-[var(--primary-500)]/10 flex items-center justify-center">
+                        <FileText className="w-6 h-6 text-[var(--primary-500)]" />
+                      </div>
                       <div>
-                        <CardTitle className="flex items-center gap-2">
-                          <ZoomIn className="w-5 h-5 text-[var(--primary-500)]" />
-                          Preview - หน้า {currentPreviewPage}
-                        </CardTitle>
-                        <CardDescription>คลิกที่รายการด้านขวาเพื่อเปลี่ยนหน้า</CardDescription>
-                      </div>
-                      <div className="text-sm text-[var(--text-muted)]">
-                        {pdfFile.name} • {formatFileSize(pdfFile.size)}
+                        <p className="font-semibold text-[var(--text-primary)]">
+                          {pdfFile.name}
+                        </p>
+                        <p className="text-sm text-[var(--text-muted)]">
+                          {formatFileSize(pdfFile.size)} • {pages.length} หน้า • เลือก {selectedCount} หน้า
+                        </p>
                       </div>
                     </div>
-                  </CardHeader>
-                  <CardContent>
-                    <PDFViewer 
-                      file={pdfFile} 
-                      className="h-[700px]"
-                      initialPage={currentPreviewPage}
-                      onPageChange={setCurrentPreviewPage}
-                    />
-                  </CardContent>
-                </Card>
-              </motion.div>
-            </div>
 
-            {/* Right: Pages List + Settings */}
-            <div className="lg:col-span-4 space-y-6">
-              {/* Settings */}
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.2 }}
-              >
-                <Card variant="glass">
-                  <CardHeader>
-                    <CardTitle>ตั้งค่า</CardTitle>
-                    <CardDescription>เลือกวิธีแยก</CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
                     {/* Mode Selection */}
-                    <div className="space-y-2">
-                      {[
-                        { value: 'selected', label: 'หน้าที่เลือก', desc: 'รวมหน้าที่เลือกเป็น PDF เดียว' },
-                        { value: 'individual', label: 'แยกแต่ละหน้า', desc: 'แยกแต่ละหน้าเป็นไฟล์ (ZIP)' },
-                      ].map((mode) => (
-                        <label
-                          key={mode.value}
-                          className={`
-                            flex items-center gap-3 p-3 rounded-lg cursor-pointer transition-all
-                            ${splitMode === mode.value
-                              ? 'bg-[var(--primary-500)]/10 border border-[var(--primary-500)]'
-                              : 'glass border border-[var(--glass-border)] hover:border-[var(--primary-500)]'
-                            }
-                          `}
+                    <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 p-1 rounded-lg bg-[var(--bg-surface)]">
+                        <button
+                          onClick={() => setSplitMode('selected')}
+                          className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                            splitMode === 'selected'
+                              ? 'bg-[var(--primary-500)] text-white'
+                              : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                          }`}
                         >
-                          <input
-                            type="radio"
-                            name="splitMode"
-                            value={mode.value}
-                            checked={splitMode === mode.value}
-                            onChange={() => setSplitMode(mode.value as any)}
-                            className="w-4 h-4 accent-[var(--primary-500)]"
-                          />
-                          <div className="flex-1">
-                            <p className="font-medium text-sm text-[var(--text-primary)]">
-                              {mode.label}
-                            </p>
-                            <p className="text-xs text-[var(--text-secondary)]">
-                              {mode.desc}
-                            </p>
-                          </div>
-                        </label>
-                      ))}
-                    </div>
+                          หน้าที่เลือก
+                        </button>
+                        <button
+                          onClick={() => setSplitMode('individual')}
+                          className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                            splitMode === 'individual'
+                              ? 'bg-[var(--primary-500)] text-white'
+                              : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                          }`}
+                        >
+                          แยกแต่ละหน้า
+                        </button>
+                      </div>
 
-                    {/* Stats */}
-                    <div className="p-3 rounded-lg bg-[var(--bg-surface)]">
-                      <p className="text-sm text-[var(--text-muted)]">
-                        เลือกแล้ว: <span className="font-bold text-[var(--primary-500)]">{selectedCount}</span>/{pages.length} หน้า
-                      </p>
-                    </div>
+                      <div className="h-8 w-px bg-[var(--border-default)]" />
 
-                    {/* Quick Actions */}
-                    <div className="grid grid-cols-2 gap-2">
                       <Button onClick={selectAll} variant="secondary" size="sm">
                         เลือกทั้งหมด
                       </Button>
                       <Button onClick={deselectAll} variant="secondary" size="sm">
                         ยกเลิกทั้งหมด
                       </Button>
-                    </div>
 
-                    {/* Split Button */}
-                    <Button
-                      onClick={splitPDF}
-                      disabled={splitting || selectedCount === 0}
-                      isLoading={splitting}
-                      className="w-full h-12"
-                    >
-                      <Scissors className="w-5 h-5" />
-                      {splitting ? 'กำลังแยก...' : 'แยก PDF'}
-                    </Button>
-                  </CardContent>
-                </Card>
-              </motion.div>
+                      <div className="h-8 w-px bg-[var(--border-default)]" />
 
-              {/* Pages List */}
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.3 }}
-              >
-                <Card variant="glass">
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                      <FileText className="w-5 h-5 text-[var(--primary-500)]" />
-                      หน้าทั้งหมด ({pages.length})
-                    </CardTitle>
-                    <CardDescription>
-                      ลากเพื่อจัดเรียง • คลิกเพื่อดู
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <DndContext
-                      sensors={sensors}
-                      collisionDetection={closestCenter}
-                      onDragEnd={handleDragEnd}
-                    >
-                      <SortableContext
-                        items={pages.map(p => p.id)}
-                        strategy={verticalListSortingStrategy}
+                      <Button
+                        onClick={splitPDF}
+                        disabled={splitting || selectedCount === 0}
+                        isLoading={splitting}
+                        className="min-w-[140px]"
                       >
-                        <div className="space-y-2 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
-                          {pages.map((page, index) => (
-                            <SortablePage
-                              key={page.id}
-                              page={page}
-                              onToggle={() => togglePage(index)}
-                              onRemove={() => removePage(index)}
-                              onPreview={() => setCurrentPreviewPage(page.pageNumber)}
-                              isPreviewPage={currentPreviewPage === page.pageNumber}
-                            />
-                          ))}
-                        </div>
-                      </SortableContext>
-                    </DndContext>
-                  </CardContent>
-                </Card>
-              </motion.div>
-            </div>
+                        <Scissors className="w-5 h-5" />
+                        {splitting ? 'กำลังแยก...' : 'แยก PDF'}
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </motion.div>
+
+            {/* Pages Grid */}
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.1 }}
+            >
+              <Card variant="glass">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <FileText className="w-5 h-5 text-[var(--primary-500)]" />
+                    ทุกหน้า ({pages.length} หน้า)
+                  </CardTitle>
+                  <CardDescription>
+                    คลิกเพื่อเลือก • ลากเพื่อจัดเรียง
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <DndContext
+                    sensors={sensors}
+                    collisionDetection={closestCenter}
+                    onDragEnd={handleDragEnd}
+                  >
+                    <SortableContext
+                      items={pages.map(p => p.id)}
+                      strategy={rectSortingStrategy}
+                    >
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8 gap-4">
+                        {pages.map((page, index) => (
+                          <SortablePageCard
+                            key={page.id}
+                            page={page}
+                            onToggle={() => togglePage(index)}
+                          />
+                        ))}
+                      </div>
+                    </SortableContext>
+                  </DndContext>
+                </CardContent>
+              </Card>
+            </motion.div>
           </div>
         )}
 
@@ -541,7 +461,7 @@ export default function PDFSplitPage() {
           transition={{ delay: 0.4 }}
         >
           {[
-            { icon: "🔍", title: "Preview ใหญ่", desc: "ดูหน้าชัดเจนก่อนแยก" },
+            { icon: "🎯", title: "เลือกง่าย", desc: "คลิกเพื่อเลือก/ยกเลิก" },
             { icon: "🔀", title: "จัดเรียงง่าย", desc: "ลากเพื่อจัดลำดับหน้า" },
             { icon: "✂️", title: "แยกอิสระ", desc: "เลือกหน้าที่ต้องการได้" },
           ].map((feature, i) => (
