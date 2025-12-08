@@ -1,26 +1,451 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+/* ══════════════════════════════════════════════════════════════
+   🎨 ANAJAK TOOLS - COLOR SYSTEM
+   Theme: Royal Digital Kingdom
+   ══════════════════════════════════════════════════════════════ */
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
+@layer base {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    /* ─────────────────────────────────────────────────────────────
+       PRIMARY - Royal Purple (ม่วงหลวง)
+       ───────────────────────────────────────────────────────────── */
+    --primary-50: #F5F3FF;
+    --primary-100: #EDE9FE;
+    --primary-200: #DDD6FE;
+    --primary-300: #C4B5FD;
+    --primary-400: #A78BFA;
+    --primary-500: #8B5CF6;   /* Main */
+    --primary-600: #7C3AED;   /* Hover */
+    --primary-700: #6D28D9;
+    --primary-800: #5B21B6;
+    --primary-900: #4C1D95;
+    
+    /* ─────────────────────────────────────────────────────────────
+       SECONDARY - Royal Gold (ทองหลวง)
+       ───────────────────────────────────────────────────────────── */
+    --gold-50: #FFFBEB;
+    --gold-100: #FEF3C7;
+    --gold-200: #FDE68A;
+    --gold-300: #FCD34D;
+    --gold-400: #FBBF24;
+    --gold-500: #F59E0B;     /* Main */
+    --gold-600: #D97706;
+    --gold-700: #B45309;
+    
+    /* ─────────────────────────────────────────────────────────────
+       ACCENT - Electric Cyan (ไซแอน)
+       ───────────────────────────────────────────────────────────── */
+    --cyan-50: #ECFEFF;
+    --cyan-100: #CFFAFE;
+    --cyan-200: #A5F3FC;
+    --cyan-300: #67E8F9;
+    --cyan-400: #22D3EE;
+    --cyan-500: #06B6D4;     /* Main */
+    --cyan-600: #0891B2;
+    --cyan-700: #0E7490;
+    
+    /* ─────────────────────────────────────────────────────────────
+       SEMANTIC COLORS
+       ───────────────────────────────────────────────────────────── */
+    --success: #10B981;       /* Emerald */
+    --warning: #F59E0B;       /* Amber */
+    --error: #EF4444;         /* Red */
+    --info: #3B82F6;          /* Blue */
+    
+    /* ─────────────────────────────────────────────────────────────
+       NEUTRAL - Slate
+       ───────────────────────────────────────────────────────────── */
+    --slate-50: #F8FAFC;
+    --slate-100: #F1F5F9;
+    --slate-200: #E2E8F0;
+    --slate-300: #CBD5E1;
+    --slate-400: #94A3B8;
+    --slate-500: #64748B;
+    --slate-600: #475569;
+    --slate-700: #334155;
+    --slate-800: #1E293B;
+    --slate-900: #0F172A;
+    --slate-950: #020617;
+
+    /* ─────────────────────────────────────────────────────────────
+       TYPOGRAPHY
+       ───────────────────────────────────────────────────────────── */
+    --font-display: 'Space Grotesk', 'Noto Sans Thai', sans-serif;
+    --font-body: 'Inter', 'Noto Sans Thai', sans-serif;
+    --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+    
+    /* Font Sizes */
+    --text-xs: 0.75rem;      /* 12px */
+    --text-sm: 0.875rem;     /* 14px */
+    --text-base: 1rem;       /* 16px */
+    --text-lg: 1.125rem;     /* 18px */
+    --text-xl: 1.25rem;      /* 20px */
+    --text-2xl: 1.5rem;      /* 24px */
+    --text-3xl: 1.875rem;    /* 30px */
+    --text-4xl: 2.25rem;     /* 36px */
+    --text-5xl: 3rem;        /* 48px */
+    --text-6xl: 3.75rem;     /* 60px */
+    
+    /* Line Heights */
+    --leading-none: 1;
+    --leading-tight: 1.25;
+    --leading-snug: 1.375;
+    --leading-normal: 1.5;
+    --leading-relaxed: 1.625;
+    
+    /* Letter Spacing */
+    --tracking-tight: -0.025em;
+    --tracking-normal: 0;
+    --tracking-wide: 0.025em;
+  }
+
+  /* ══════════════════════════════════════════════════════════════
+     ☀️ LIGHT THEME - "Crystal Palace"
+     ══════════════════════════════════════════════════════════════ */
+  
+  :root,
+  [data-theme="light"] {
+    /* Background */
+    --bg-base: #FFFFFF;
+    --bg-subtle: #F8FAFC;
+    --bg-surface: #FFFFFF;
+    --bg-elevated: #F1F5F9;
+    
+    /* Glass Morphism */
+    --glass-bg: rgba(255, 255, 255, 0.8);
+    --glass-border: rgba(0, 0, 0, 0.08);
+    --glass-blur: 16px;
+    
+    /* Text */
+    --text-primary: #0F172A;
+    --text-secondary: #475569;
+    --text-muted: #64748B;
+    --text-inverse: #FFFFFF;
+    
+    /* Border */
+    --border-default: rgba(0, 0, 0, 0.08);
+    --border-hover: rgba(0, 0, 0, 0.15);
+    
+    /* Shadows */
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+    --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.07);
+    --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.1);
+    --shadow-glow: 0 0 40px rgba(139, 92, 246, 0.1);
+    
+    /* Gradient Background */
+    --gradient-bg: radial-gradient(
+      ellipse at top,
+      rgba(139, 92, 246, 0.08) 0%,
+      transparent 50%
+    );
+  }
+
+  /* ══════════════════════════════════════════════════════════════
+     🌙 DARK THEME - "Midnight Kingdom"
+     ══════════════════════════════════════════════════════════════ */
+  
+  @media (prefers-color-scheme: dark) {
+    :root {
+      /* Background - Deep space gradient */
+      --bg-base: #030712;                    /* Almost black */
+      --bg-subtle: #0F172A;                  /* Slate 900 */
+      --bg-surface: #1E293B;                 /* Slate 800 */
+      --bg-elevated: #334155;                /* Slate 700 */
+      
+      /* Glass Morphism */
+      --glass-bg: rgba(15, 23, 42, 0.7);
+      --glass-border: rgba(148, 163, 184, 0.1);
+      --glass-blur: 16px;
+      
+      /* Text */
+      --text-primary: #F8FAFC;               /* Slate 50 */
+      --text-secondary: #94A3B8;             /* Slate 400 */
+      --text-muted: #64748B;                 /* Slate 500 */
+      --text-inverse: #0F172A;
+      
+      /* Border */
+      --border-default: rgba(148, 163, 184, 0.15);
+      --border-hover: rgba(148, 163, 184, 0.25);
+      
+      /* Shadows */
+      --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+      --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.4);
+      --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.5);
+      --shadow-glow: 0 0 40px rgba(139, 92, 246, 0.15);
+      
+      /* Gradient Background */
+      --gradient-bg: radial-gradient(
+        ellipse at top,
+        rgba(139, 92, 246, 0.15) 0%,
+        transparent 50%
+      ), radial-gradient(
+        ellipse at bottom right,
+        rgba(6, 182, 212, 0.1) 0%,
+        transparent 50%
+      );
+    }
+  }
+
+  [data-theme="dark"] {
+    /* Background - Deep space gradient */
+    --bg-base: #030712;
+    --bg-subtle: #0F172A;
+    --bg-surface: #1E293B;
+    --bg-elevated: #334155;
+    
+    /* Glass Morphism */
+    --glass-bg: rgba(15, 23, 42, 0.7);
+    --glass-border: rgba(148, 163, 184, 0.1);
+    --glass-blur: 16px;
+    
+    /* Text */
+    --text-primary: #F8FAFC;
+    --text-secondary: #94A3B8;
+    --text-muted: #64748B;
+    --text-inverse: #0F172A;
+    
+    /* Border */
+    --border-default: rgba(148, 163, 184, 0.15);
+    --border-hover: rgba(148, 163, 184, 0.25);
+    
+    /* Shadows */
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+    --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.4);
+    --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.5);
+    --shadow-glow: 0 0 40px rgba(139, 92, 246, 0.15);
+    
+    /* Gradient Background */
+    --gradient-bg: radial-gradient(
+      ellipse at top,
+      rgba(139, 92, 246, 0.15) 0%,
+      transparent 50%
+    ), radial-gradient(
+      ellipse at bottom right,
+      rgba(6, 182, 212, 0.1) 0%,
+      transparent 50%
+    );
+  }
+
+  /* ══════════════════════════════════════════════════════════════
+     🎯 BASE STYLES
+     ══════════════════════════════════════════════════════════════ */
+  
+  * {
+    border-color: var(--border-default);
+  }
+  
+  body {
+    font-family: var(--font-body);
+    background: var(--bg-base);
+    background-image: var(--gradient-bg);
+    background-attachment: fixed;
+    color: var(--text-primary);
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* ══════════════════════════════════════════════════════════════
+   📝 TYPOGRAPHY CLASSES
+   ══════════════════════════════════════════════════════════════ */
+
+@layer utilities {
+  .heading-1 {
+    font-family: var(--font-display);
+    font-size: var(--text-5xl);
+    font-weight: 700;
+    line-height: var(--leading-tight);
+    letter-spacing: var(--tracking-tight);
+  }
+
+  .heading-2 {
+    font-family: var(--font-display);
+    font-size: var(--text-4xl);
+    font-weight: 600;
+    line-height: var(--leading-tight);
+  }
+
+  .heading-3 {
+    font-family: var(--font-display);
+    font-size: var(--text-2xl);
+    font-weight: 600;
+    line-height: var(--leading-snug);
+  }
+
+  .body-large {
+    font-family: var(--font-body);
+    font-size: var(--text-lg);
+    line-height: var(--leading-relaxed);
+  }
+
+  .body {
+    font-family: var(--font-body);
+    font-size: var(--text-base);
+    line-height: var(--leading-normal);
+  }
+
+  .caption {
+    font-family: var(--font-body);
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+  }
+
+  /* Glass Effect */
+  .glass {
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    backdrop-filter: blur(var(--glass-blur));
+  }
+
+  /* Gradient Text */
+  .gradient-text {
+    background: linear-gradient(135deg, var(--primary-500), var(--cyan-500));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  /* Glow Effect */
+  .glow {
+    box-shadow: var(--shadow-glow);
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════
+   🎨 ANIMATIONS
+   ══════════════════════════════════════════════════════════════ */
+
+@keyframes shimmer {
+  0% {
+    background-position: -1000px 0;
+  }
+  100% {
+    background-position: 1000px 0;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slide-in-up {
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes slide-in-down {
+  from {
+    transform: translateY(-20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes pulse-glow {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+@keyframes float {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+@keyframes gradient-x {
+  0%, 100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+.animate-shimmer {
+  animation: shimmer 2s infinite linear;
+}
+
+.animate-fade-in {
+  animation: fade-in 0.3s ease-out;
+}
+
+.animate-slide-in-up {
+  animation: slide-in-up 0.4s ease-out;
+}
+
+.animate-slide-in-down {
+  animation: slide-in-down 0.4s ease-out;
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+.animate-float {
+  animation: float 3s ease-in-out infinite;
+}
+
+.animate-gradient-x {
+  background-size: 200% 200%;
+  animation: gradient-x 3s ease infinite;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-subtle);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--primary-500);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--primary-600);
+}
+
+/* Selection */
+::selection {
+  background: var(--primary-500);
+  color: white;
+}
+
+/* Focus Visible */
+:focus-visible {
+  outline: 2px solid var(--primary-500);
+  outline-offset: 2px;
+}
+
+/* Line Clamp */
+.line-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
