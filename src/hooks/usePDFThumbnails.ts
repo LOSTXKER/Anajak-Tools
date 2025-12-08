@@ -28,8 +28,8 @@ export function usePDFThumbnails(file: File | null) {
         // Dynamic import to avoid SSR issues
         const pdfjsLib = await import('pdfjs-dist')
         
-        // Configure worker with proper URL
-        pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`
+        // Configure worker - use unpkg CDN which has all versions
+        pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`
 
         const arrayBuffer = await file.arrayBuffer()
         const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise
