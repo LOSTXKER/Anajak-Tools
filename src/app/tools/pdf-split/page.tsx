@@ -3,7 +3,7 @@
 import { useState } from "react"
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/Card"
 import { Button } from "@/components/ui/Button"
-import { FileText, Upload, Download, Scissors, ArrowLeft, Sparkles, GripVertical, Check, Loader2 } from "lucide-react"
+import { FileText, Upload, Download, Scissors, ArrowLeft, Sparkles, GripVertical, Check, Loader2, ZoomIn, X, ChevronLeft, ChevronRight } from "lucide-react"
 import { useDropzone } from "react-dropzone"
 import { PDFDocument } from "pdf-lib"
 import { formatFileSize } from "@/lib/utils"
@@ -11,7 +11,7 @@ import { usePDFThumbnails } from "@/hooks/usePDFThumbnails"
 import JSZip from "jszip"
 import { saveAs } from "file-saver"
 import Link from "next/link"
-import { motion } from "framer-motion"
+import { motion, AnimatePresence } from "framer-motion"
 import {
   DndContext,
   closestCenter,
@@ -39,11 +39,13 @@ interface PageInfo {
 function SortablePageCard({ 
   page, 
   onToggle,
+  onZoom,
   thumbnailUrl,
   isLoading,
 }: { 
   page: PageInfo
   onToggle: () => void
+  onZoom: () => void
   thumbnailUrl?: string
   isLoading?: boolean
 }) {
@@ -87,6 +89,18 @@ function SortablePageCard({
       >
         <GripVertical className="w-4 h-4 text-white" />
       </div>
+
+      {/* Zoom Button */}
+      <button
+        onClick={(e) => {
+          e.stopPropagation()
+          onZoom()
+        }}
+        className="absolute top-2 left-12 p-2 rounded-lg bg-black/60 backdrop-blur-sm z-10 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black/80"
+        title="ขยายดู"
+      >
+        <ZoomIn className="w-4 h-4 text-white" />
+      </button>
 
       {/* Checkbox */}
       <div className="absolute top-2 right-2 z-10">
@@ -138,11 +152,171 @@ function SortablePageCard({
   )
 }
 
+// Lightbox Modal Component
+function PageLightbox({
+  isOpen,
+  onClose,
+  currentPage,
+  pages,
+  thumbnails,
+  onNavigate,
+}: {
+  isOpen: boolean
+  onClose: () => void
+  currentPage: number
+  pages: PageInfo[]
+  thumbnails: Map<number, string>
+  onNavigate: (pageNumber: number) => void
+}) {
+  if (!isOpen) return null
+
+  const currentPageInfo = pages.find(p => p.pageNumber === currentPage)
+  const currentIndex = pages.findIndex(p => p.pageNumber === currentPage)
+  const hasPrev = currentIndex > 0
+  const hasNext = currentIndex < pages.length - 1
+
+  const goToPrev = () => {
+    if (hasPrev) {
+      onNavigate(pages[currentIndex - 1].pageNumber)
+    }
+  }
+
+  const goToNext = () => {
+    if (hasNext) {
+      onNavigate(pages[currentIndex + 1].pageNumber)
+    }
+  }
+
+  // Handle keyboard navigation
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Escape') onClose()
+    if (e.key === 'ArrowLeft') goToPrev()
+    if (e.key === 'ArrowRight') goToNext()
+  }
+
+  return (
+    <AnimatePresence>
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-sm"
+        onClick={onClose}
+        onKeyDown={handleKeyDown}
+        tabIndex={0}
+      >
+        {/* Close Button */}
+        <button
+          onClick={onClose}
+          className="absolute top-4 right-4 p-3 rounded-full bg-white/10 hover:bg-white/20 transition-colors z-50"
+        >
+          <X className="w-6 h-6 text-white" />
+        </button>
+
+        {/* Page Counter */}
+        <div className="absolute top-4 left-4 px-4 py-2 rounded-lg bg-white/10 backdrop-blur-sm">
+          <p className="text-white font-semibold">
+            หน้า {currentPage} / {pages.length}
+          </p>
+        </div>
+
+        {/* Navigation - Previous */}
+        {hasPrev && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              goToPrev()
+            }}
+            className="absolute left-4 top-1/2 -translate-y-1/2 p-3 rounded-full bg-white/10 hover:bg-white/20 transition-colors"
+          >
+            <ChevronLeft className="w-8 h-8 text-white" />
+          </button>
+        )}
+
+        {/* Navigation - Next */}
+        {hasNext && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              goToNext()
+            }}
+            className="absolute right-4 top-1/2 -translate-y-1/2 p-3 rounded-full bg-white/10 hover:bg-white/20 transition-colors"
+          >
+            <ChevronRight className="w-8 h-8 text-white" />
+          </button>
+        )}
+
+        {/* Main Image */}
+        <motion.div
+          key={currentPage}
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          exit={{ opacity: 0, scale: 0.9 }}
+          className="max-w-[90vw] max-h-[85vh] relative"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {thumbnails.has(currentPage) ? (
+            <img
+              src={thumbnails.get(currentPage)}
+              alt={`Page ${currentPage}`}
+              className="max-w-full max-h-[85vh] object-contain rounded-lg shadow-2xl"
+            />
+          ) : (
+            <div className="w-[600px] h-[800px] bg-white rounded-lg flex items-center justify-center">
+              <div className="text-center">
+                <FileText className="w-24 h-24 text-[var(--text-muted)] mx-auto mb-4" />
+                <p className="text-2xl font-bold text-[var(--text-primary)]">หน้า {currentPage}</p>
+                <p className="text-[var(--text-muted)]">กำลังโหลด...</p>
+              </div>
+            </div>
+          )}
+        </motion.div>
+
+        {/* Thumbnail Strip */}
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-2 p-2 rounded-xl bg-black/50 backdrop-blur-sm max-w-[90vw] overflow-x-auto">
+          {pages.map((page) => (
+            <button
+              key={page.id}
+              onClick={(e) => {
+                e.stopPropagation()
+                onNavigate(page.pageNumber)
+              }}
+              className={`
+                flex-shrink-0 w-16 h-20 rounded-lg overflow-hidden border-2 transition-all
+                ${page.pageNumber === currentPage 
+                  ? 'border-[var(--primary-500)] ring-2 ring-[var(--primary-500)]/50' 
+                  : 'border-transparent hover:border-white/50'
+                }
+              `}
+            >
+              {thumbnails.has(page.pageNumber) ? (
+                <img
+                  src={thumbnails.get(page.pageNumber)}
+                  alt={`Page ${page.pageNumber}`}
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <div className="w-full h-full bg-white flex items-center justify-center">
+                  <span className="text-xs font-bold">{page.pageNumber}</span>
+                </div>
+              )}
+            </button>
+          ))}
+        </div>
+      </motion.div>
+    </AnimatePresence>
+  )
+}
+
 export default function PDFSplitPage() {
   const [pdfFile, setPdfFile] = useState<File | null>(null)
   const [pages, setPages] = useState<PageInfo[]>([])
   const [splitting, setSplitting] = useState(false)
   const [splitMode, setSplitMode] = useState<'selected' | 'individual'>('selected')
+  
+  // Lightbox state
+  const [lightboxOpen, setLightboxOpen] = useState(false)
+  const [lightboxPage, setLightboxPage] = useState(1)
 
   const { thumbnails, loading: thumbnailsLoading } = usePDFThumbnails(pdfFile)
 
@@ -214,6 +388,11 @@ export default function PDFSplitPage() {
     setPages(pages.map(p => ({ ...p, selected: false })))
   }
 
+  const openLightbox = (pageNumber: number) => {
+    setLightboxPage(pageNumber)
+    setLightboxOpen(true)
+  }
+
   const splitPDF = async () => {
     if (!pdfFile || pages.length === 0) return
 
@@ -272,6 +451,16 @@ export default function PDFSplitPage() {
   return (
     <div className="min-h-screen py-24 px-4">
       <div className="container mx-auto max-w-[1800px]">
+        {/* Lightbox Modal */}
+        <PageLightbox
+          isOpen={lightboxOpen}
+          onClose={() => setLightboxOpen(false)}
+          currentPage={lightboxPage}
+          pages={pages}
+          thumbnails={thumbnails}
+          onNavigate={setLightboxPage}
+        />
+
         {/* Back Button */}
         <motion.div
           initial={{ opacity: 0, x: -20 }}
@@ -379,7 +568,7 @@ export default function PDFSplitPage() {
                     </div>
 
                     {/* Mode Selection */}
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <div className="flex items-center gap-2 p-1 rounded-lg bg-[var(--bg-surface)]">
                         <button
                           onClick={() => setSplitMode('selected')}
@@ -403,7 +592,7 @@ export default function PDFSplitPage() {
                         </button>
                       </div>
 
-                      <div className="h-8 w-px bg-[var(--border-default)]" />
+                      <div className="h-8 w-px bg-[var(--border-default)] hidden sm:block" />
 
                       <Button onClick={selectAll} variant="secondary" size="sm">
                         เลือกทั้งหมด
@@ -412,7 +601,7 @@ export default function PDFSplitPage() {
                         ยกเลิกทั้งหมด
                       </Button>
 
-                      <div className="h-8 w-px bg-[var(--border-default)]" />
+                      <div className="h-8 w-px bg-[var(--border-default)] hidden sm:block" />
 
                       <Button
                         onClick={splitPDF}
@@ -442,7 +631,7 @@ export default function PDFSplitPage() {
                     ทุกหน้า ({pages.length} หน้า)
                   </CardTitle>
                   <CardDescription>
-                    คลิกเพื่อเลือก • ลากเพื่อจัดเรียง
+                    คลิกเพื่อเลือก • ลากเพื่อจัดเรียง • 🔍 เพื่อขยายดู
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
@@ -461,6 +650,7 @@ export default function PDFSplitPage() {
                             key={page.id}
                             page={page}
                             onToggle={() => togglePage(index)}
+                            onZoom={() => openLightbox(page.pageNumber)}
                             thumbnailUrl={thumbnails.get(page.pageNumber)}
                             isLoading={thumbnailsLoading && !thumbnails.has(page.pageNumber)}
                           />
@@ -476,15 +666,16 @@ export default function PDFSplitPage() {
 
         {/* Features */}
         <motion.div 
-          className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-10"
+          className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-10"
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.4 }}
         >
           {[
-            { icon: "👁️", title: "ดู Preview", desc: "เห็นเนื้อหาจริงของแต่ละหน้า" },
-            { icon: "🔀", title: "จัดเรียงง่าย", desc: "ลากเพื่อจัดลำดับหน้า" },
-            { icon: "✂️", title: "แยกอิสระ", desc: "เลือกหน้าที่ต้องการได้" },
+            { icon: "👁️", title: "ดู Preview", desc: "เห็นเนื้อหาจริง" },
+            { icon: "🔍", title: "ขยายดู", desc: "ดูแบบเต็มจอ" },
+            { icon: "🔀", title: "จัดเรียง", desc: "ลากจัดลำดับ" },
+            { icon: "✂️", title: "แยกอิสระ", desc: "เลือกเฉพาะหน้า" },
           ].map((feature, i) => (
             <div key={i} className="p-5 rounded-2xl glass border border-[var(--glass-border)] hover:border-[var(--primary-500)]/30 transition-colors">
               <div className="text-3xl mb-3">{feature.icon}</div>
