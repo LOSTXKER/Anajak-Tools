@@ -3,10 +3,11 @@
 import { useState } from "react"
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/Card"
 import { Button } from "@/components/ui/Button"
-import { FileText, Upload, Download, Scissors, ArrowLeft, Sparkles, GripVertical, Check } from "lucide-react"
+import { FileText, Upload, Download, Scissors, ArrowLeft, Sparkles, GripVertical, Check, Loader2 } from "lucide-react"
 import { useDropzone } from "react-dropzone"
 import { PDFDocument } from "pdf-lib"
 import { formatFileSize } from "@/lib/utils"
+import { usePDFThumbnails } from "@/hooks/usePDFThumbnails"
 import JSZip from "jszip"
 import { saveAs } from "file-saver"
 import Link from "next/link"
@@ -38,9 +39,13 @@ interface PageInfo {
 function SortablePageCard({ 
   page, 
   onToggle,
+  thumbnailUrl,
+  isLoading,
 }: { 
   page: PageInfo
   onToggle: () => void
+  thumbnailUrl?: string
+  isLoading?: boolean
 }) {
   const {
     attributes,
@@ -97,14 +102,25 @@ function SortablePageCard({
       </div>
 
       {/* Page Preview */}
-      <div className="aspect-[3/4] bg-white p-4 flex flex-col items-center justify-center">
-        <FileText className="w-16 h-16 text-[var(--text-muted)] mb-3" />
-        <p className="font-bold text-2xl text-[var(--text-primary)]">
-          {page.pageNumber}
-        </p>
-        <p className="text-xs text-[var(--text-muted)] mt-1">
-          หน้า {page.pageNumber}
-        </p>
+      <div className="aspect-[3/4] bg-white relative overflow-hidden">
+        {isLoading ? (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <Loader2 className="w-8 h-8 text-[var(--primary-500)] animate-spin" />
+          </div>
+        ) : thumbnailUrl ? (
+          <img 
+            src={thumbnailUrl} 
+            alt={`Page ${page.pageNumber}`}
+            className="w-full h-full object-contain"
+          />
+        ) : (
+          <div className="absolute inset-0 flex flex-col items-center justify-center p-4">
+            <FileText className="w-12 h-12 text-[var(--text-muted)] mb-2" />
+            <p className="font-bold text-xl text-[var(--text-primary)]">
+              {page.pageNumber}
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Page Number Badge */}
@@ -127,6 +143,8 @@ export default function PDFSplitPage() {
   const [pages, setPages] = useState<PageInfo[]>([])
   const [splitting, setSplitting] = useState(false)
   const [splitMode, setSplitMode] = useState<'selected' | 'individual'>('selected')
+
+  const { thumbnails, loading: thumbnailsLoading } = usePDFThumbnails(pdfFile)
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -355,6 +373,7 @@ export default function PDFSplitPage() {
                         </p>
                         <p className="text-sm text-[var(--text-muted)]">
                           {formatFileSize(pdfFile.size)} • {pages.length} หน้า • เลือก {selectedCount} หน้า
+                          {thumbnailsLoading && <span className="ml-2 text-[var(--primary-500)]">• กำลังโหลด Preview...</span>}
                         </p>
                       </div>
                     </div>
@@ -442,6 +461,8 @@ export default function PDFSplitPage() {
                             key={page.id}
                             page={page}
                             onToggle={() => togglePage(index)}
+                            thumbnailUrl={thumbnails.get(page.pageNumber)}
+                            isLoading={thumbnailsLoading && !thumbnails.has(page.pageNumber)}
                           />
                         ))}
                       </div>
@@ -461,7 +482,7 @@ export default function PDFSplitPage() {
           transition={{ delay: 0.4 }}
         >
           {[
-            { icon: "🎯", title: "เลือกง่าย", desc: "คลิกเพื่อเลือก/ยกเลิก" },
+            { icon: "👁️", title: "ดู Preview", desc: "เห็นเนื้อหาจริงของแต่ละหน้า" },
             { icon: "🔀", title: "จัดเรียงง่าย", desc: "ลากเพื่อจัดลำดับหน้า" },
             { icon: "✂️", title: "แยกอิสระ", desc: "เลือกหน้าที่ต้องการได้" },
           ].map((feature, i) => (
