@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/Card"
 import { Button } from "@/components/ui/Button"
 import { FileText, Upload, Download, Scissors, ArrowLeft, Sparkles, GripVertical, Check, Loader2, ZoomIn, X, ChevronLeft, ChevronRight } from "lucide-react"
@@ -152,13 +152,15 @@ function SortablePageCard({
   )
 }
 
-// Lightbox Modal Component
+// Lightbox Modal Component with High-Res Images
 function PageLightbox({
   isOpen,
   onClose,
   currentPage,
   pages,
   thumbnails,
+  fullImages,
+  loadFullImage,
   onNavigate,
 }: {
   isOpen: boolean
@@ -166,11 +168,24 @@ function PageLightbox({
   currentPage: number
   pages: PageInfo[]
   thumbnails: Map<number, string>
+  fullImages: Map<number, string>
+  loadFullImage: (pageNumber: number) => Promise<void>
   onNavigate: (pageNumber: number) => void
 }) {
+  const [loadingFullImage, setLoadingFullImage] = useState(false)
+
+  // Load high-res image when current page changes
+  useEffect(() => {
+    if (isOpen && currentPage && !fullImages.has(currentPage)) {
+      setLoadingFullImage(true)
+      loadFullImage(currentPage).finally(() => {
+        setLoadingFullImage(false)
+      })
+    }
+  }, [isOpen, currentPage, fullImages, loadFullImage])
+
   if (!isOpen) return null
 
-  const currentPageInfo = pages.find(p => p.pageNumber === currentPage)
   const currentIndex = pages.findIndex(p => p.pageNumber === currentPage)
   const hasPrev = currentIndex > 0
   const hasNext = currentIndex < pages.length - 1
@@ -194,6 +209,9 @@ function PageLightbox({
     if (e.key === 'ArrowRight') goToNext()
   }
 
+  // Use full image if available, otherwise fall back to thumbnail
+  const displayImage = fullImages.get(currentPage) || thumbnails.get(currentPage)
+
   return (
     <AnimatePresence>
       <motion.div
@@ -213,11 +231,26 @@ function PageLightbox({
           <X className="w-6 h-6 text-white" />
         </button>
 
-        {/* Page Counter */}
-        <div className="absolute top-4 left-4 px-4 py-2 rounded-lg bg-white/10 backdrop-blur-sm">
-          <p className="text-white font-semibold">
-            หน้า {currentPage} / {pages.length}
-          </p>
+        {/* Page Counter & Quality Indicator */}
+        <div className="absolute top-4 left-4 flex items-center gap-3">
+          <div className="px-4 py-2 rounded-lg bg-white/10 backdrop-blur-sm">
+            <p className="text-white font-semibold">
+              หน้า {currentPage} / {pages.length}
+            </p>
+          </div>
+          <div className={`px-3 py-1 rounded-full text-xs font-medium ${
+            fullImages.has(currentPage) 
+              ? 'bg-green-500/20 text-green-300' 
+              : loadingFullImage 
+                ? 'bg-yellow-500/20 text-yellow-300'
+                : 'bg-white/10 text-white/70'
+          }`}>
+            {fullImages.has(currentPage) 
+              ? '✓ HD' 
+              : loadingFullImage 
+                ? '⏳ กำลังโหลด HD...'
+                : 'SD'}
+          </div>
         </div>
 
         {/* Navigation - Previous */}
@@ -255,16 +288,27 @@ function PageLightbox({
           className="max-w-[90vw] max-h-[85vh] relative"
           onClick={(e) => e.stopPropagation()}
         >
-          {thumbnails.has(currentPage) ? (
-            <img
-              src={thumbnails.get(currentPage)}
-              alt={`Page ${currentPage}`}
-              className="max-w-full max-h-[85vh] object-contain rounded-lg shadow-2xl"
-            />
+          {displayImage ? (
+            <div className="relative">
+              <img
+                src={displayImage}
+                alt={`Page ${currentPage}`}
+                className="max-w-full max-h-[85vh] object-contain rounded-lg shadow-2xl"
+              />
+              {/* Loading overlay when upgrading to HD */}
+              {loadingFullImage && !fullImages.has(currentPage) && (
+                <div className="absolute inset-0 flex items-center justify-center bg-black/30 rounded-lg">
+                  <div className="flex items-center gap-2 px-4 py-2 rounded-lg bg-black/60 backdrop-blur-sm">
+                    <Loader2 className="w-5 h-5 text-white animate-spin" />
+                    <span className="text-white text-sm">กำลังโหลดภาพ HD...</span>
+                  </div>
+                </div>
+              )}
+            </div>
           ) : (
             <div className="w-[600px] h-[800px] bg-white rounded-lg flex items-center justify-center">
               <div className="text-center">
-                <FileText className="w-24 h-24 text-[var(--text-muted)] mx-auto mb-4" />
+                <Loader2 className="w-12 h-12 text-[var(--primary-500)] mx-auto mb-4 animate-spin" />
                 <p className="text-2xl font-bold text-[var(--text-primary)]">หน้า {currentPage}</p>
                 <p className="text-[var(--text-muted)]">กำลังโหลด...</p>
               </div>
@@ -318,7 +362,8 @@ export default function PDFSplitPage() {
   const [lightboxOpen, setLightboxOpen] = useState(false)
   const [lightboxPage, setLightboxPage] = useState(1)
 
-  const { thumbnails, loading: thumbnailsLoading } = usePDFThumbnails(pdfFile)
+  // Get thumbnails (small) and fullImages (high-res) from hook
+  const { thumbnails, fullImages, loading: thumbnailsLoading, loadFullImage } = usePDFThumbnails(pdfFile)
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -451,13 +496,15 @@ export default function PDFSplitPage() {
   return (
     <div className="min-h-screen py-24 px-4">
       <div className="container mx-auto max-w-[1800px]">
-        {/* Lightbox Modal */}
+        {/* Lightbox Modal with High-Res Support */}
         <PageLightbox
           isOpen={lightboxOpen}
           onClose={() => setLightboxOpen(false)}
           currentPage={lightboxPage}
           pages={pages}
           thumbnails={thumbnails}
+          fullImages={fullImages}
+          loadFullImage={loadFullImage}
           onNavigate={setLightboxPage}
         />
 
@@ -487,7 +534,7 @@ export default function PDFSplitPage() {
                 แยก PDF
               </h1>
               <p className="text-[var(--text-secondary)] mt-1">
-                ดู Preview ทุกหน้า จัดเรียง และแยก PDF
+                ดู Preview ทุกหน้า จัดเรียง และแยก PDF • คลิก 🔍 เพื่อดูภาพความละเอียดสูง
               </p>
             </div>
           </div>
@@ -631,7 +678,7 @@ export default function PDFSplitPage() {
                     ทุกหน้า ({pages.length} หน้า)
                   </CardTitle>
                   <CardDescription>
-                    คลิกเพื่อเลือก • ลากเพื่อจัดเรียง • 🔍 เพื่อขยายดู
+                    คลิกเพื่อเลือก • ลากเพื่อจัดเรียง • 🔍 เพื่อขยายดูแบบ HD
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
@@ -673,7 +720,7 @@ export default function PDFSplitPage() {
         >
           {[
             { icon: "👁️", title: "ดู Preview", desc: "เห็นเนื้อหาจริง" },
-            { icon: "🔍", title: "ขยายดู", desc: "ดูแบบเต็มจอ" },
+            { icon: "🔍", title: "ขยาย HD", desc: "ดูภาพความละเอียดสูง" },
             { icon: "🔀", title: "จัดเรียง", desc: "ลากจัดลำดับ" },
             { icon: "✂️", title: "แยกอิสระ", desc: "เลือกเฉพาะหน้า" },
           ].map((feature, i) => (
