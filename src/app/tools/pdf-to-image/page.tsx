@@ -221,7 +221,7 @@ export default function PDFToImagePage() {
                 )}
               </CardContent>
             </Card>
-
+          </motion.div>
 
             {/* Settings */}
             {pdfFile && images.length === 0 && (
