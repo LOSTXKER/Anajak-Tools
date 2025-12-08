@@ -3,7 +3,7 @@
 import { useState } from "react"
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/Card"
 import { Button } from "@/components/ui/Button"
-import { FileText, Upload, Download, ArrowLeft, Image as ImageIcon, Sparkles, X } from "lucide-react"
+import { FileText, Upload, Download, ArrowLeft, Image as ImageIcon, Sparkles, X, Folder } from "lucide-react"
 import { useDropzone } from "react-dropzone"
 import { PDFDocument } from "pdf-lib"
 import Link from "next/link"
@@ -14,18 +14,100 @@ export default function ImageToPDFPage() {
   const [previews, setPreviews] = useState<string[]>([])
   const [converting, setConverting] = useState(false)
   const [pageSize, setPageSize] = useState<'a4' | 'letter' | 'auto'>('auto')
+  const [folderCount, setFolderCount] = useState(0)
 
-  const onDrop = (acceptedFiles: File[]) => {
-    setImages([...images, ...acceptedFiles])
+  // Extract images from folder (including nested folders)
+  const extractImagesFromFileList = async (items: DataTransferItemList): Promise<File[]> => {
+    const imageFiles: File[] = []
+    const imageExtensions = ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp']
+
+    const traverseDirectory = async (entry: any): Promise<void> => {
+      if (entry.isFile) {
+        const file: File = await new Promise((resolve, reject) => {
+          entry.file(resolve, reject)
+        })
+        
+        const isImage = file.type.startsWith('image/') || 
+                       imageExtensions.some(ext => file.name.toLowerCase().endsWith(ext))
+        
+        if (isImage) {
+          imageFiles.push(file)
+        }
+      } else if (entry.isDirectory) {
+        const dirReader = entry.createReader()
+        const entries: any[] = await new Promise((resolve, reject) => {
+          dirReader.readEntries(resolve, reject)
+        })
+        
+        for (const childEntry of entries) {
+          await traverseDirectory(childEntry)
+        }
+      }
+    }
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i]
+      if (item.kind === 'file') {
+        const entry = item.webkitGetAsEntry()
+        if (entry) {
+          await traverseDirectory(entry)
+        }
+      }
+    }
+
+    return imageFiles
+  }
+
+  const onDrop = async (acceptedFiles: File[], fileRejections: any, event: any) => {
+    let filesToProcess: File[] = []
+    let folderDetected = false
+
+    // Check if folder was dropped
+    if (event.dataTransfer && event.dataTransfer.items) {
+      const items = event.dataTransfer.items
+      
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i]
+        if (item.kind === 'file') {
+          const entry = item.webkitGetAsEntry()
+          if (entry && entry.isDirectory) {
+            folderDetected = true
+            break
+          }
+        }
+      }
+
+      if (folderDetected) {
+        filesToProcess = await extractImagesFromFileList(items)
+        setFolderCount(prev => prev + 1)
+      } else {
+        filesToProcess = acceptedFiles
+      }
+    } else {
+      filesToProcess = acceptedFiles
+    }
+
+    if (filesToProcess.length === 0) {
+      if (folderDetected) {
+        alert('ไม่พบไฟล์รูปภาพในโฟลเดอร์ที่เลือก')
+      }
+      return
+    }
+
+    setImages([...images, ...filesToProcess])
     
     // Create previews
-    acceptedFiles.forEach(file => {
+    filesToProcess.forEach(file => {
       const reader = new FileReader()
       reader.onload = (e) => {
         setPreviews(prev => [...prev, e.target?.result as string])
       }
       reader.readAsDataURL(file)
     })
+    
+    if (folderDetected) {
+      alert(`พบ ${filesToProcess.length} ไฟล์รูปภาพในโฟลเดอร์`)
+    }
   }
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
@@ -164,7 +246,7 @@ export default function ImageToPDFPage() {
                 รูปภาพเป็น PDF
               </h1>
               <p className="text-[var(--text-secondary)] mt-1">
-                แปลงรูปภาพหลายรูปเป็นไฟล์ PDF เดียว
+                แปลงรูปภาพหลายรูปเป็นไฟล์ PDF เดียว • รองรับโฟลเดอร์ 📁
               </p>
             </div>
           </div>
@@ -197,23 +279,39 @@ export default function ImageToPDFPage() {
                   `}
                 >
                   <input {...getInputProps()} />
-                  <Upload className="w-16 h-16 mx-auto mb-4 text-[var(--text-muted)]" />
+                  <div className="flex items-center justify-center gap-3 mb-4">
+                    <ImageIcon className="w-12 h-12 text-[var(--text-muted)]" />
+                    <Folder className="w-12 h-12 text-[var(--primary-500)]" />
+                  </div>
                   {isDragActive ? (
-                    <p className="text-[var(--primary-500)] font-medium text-lg">วางรูปภาพที่นี่...</p>
+                    <p className="text-[var(--primary-500)] font-medium text-lg">วางรูปภาพหรือโฟลเดอร์ที่นี่...</p>
                   ) : (
                     <div>
-                      <p className="font-semibold text-[var(--text-primary)] mb-2 text-lg">
-                        ลากรูปภาพมาวางที่นี่
+                      <p className="font-semibold text-[var(--text-primary)] mb-2">
+                        ลากรูปภาพหรือโฟลเดอร์มาวางที่นี่
                       </p>
                       <p className="text-sm text-[var(--text-muted)] mb-4">
-                        หรือคลิกเพื่อเลือกไฟล์ (PNG, JPG, WebP, GIF)
+                        รองรับโฟลเดอร์ซ้อนหลายชั้น 📂 (PNG, JPG, WebP, GIF)
                       </p>
-                      <Button variant="secondary" size="sm">
-                        เลือกรูปภาพ
+                      <Button variant="secondary">
+                        <Upload className="w-5 h-5" />
+                        เลือกรูปภาพหรือโฟลเดอร์
                       </Button>
                     </div>
                   )}
                 </div>
+
+                {/* Folder Info */}
+                {folderCount > 0 && (
+                  <div className="mt-4 p-3 rounded-lg bg-[var(--primary-500)]/10 border border-[var(--primary-500)]/20">
+                    <div className="flex items-center gap-2 text-[var(--primary-500)]">
+                      <Folder className="w-5 h-5" />
+                      <span className="text-sm font-medium">
+                        ได้รับไฟล์จาก {folderCount} โฟลเดอร์
+                      </span>
+                    </div>
+                  </div>
+                )}
 
                 {/* Image Previews */}
                 {images.length > 0 && (

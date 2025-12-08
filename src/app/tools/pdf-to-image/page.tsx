@@ -1,31 +1,116 @@
 "use client"
 
-import { useState, useRef } from "react"
+import { useState } from "react"
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/Card"
 import { Button } from "@/components/ui/Button"
-import { FileText, Upload, Download, ArrowLeft, Image as ImageIcon, Sparkles, Eye } from "lucide-react"
+import { FileText, Upload, Download, ArrowLeft, Image as ImageIcon, Sparkles, Folder, Trash2, Eye } from "lucide-react"
 import { useDropzone } from "react-dropzone"
-import { PDFDocument } from "pdf-lib"
-import { PDFViewer } from "@/components/pdf/PDFViewer"
+import { formatFileSize } from "@/lib/utils"
 import Link from "next/link"
 import { motion } from "framer-motion"
 import JSZip from "jszip"
 import { saveAs } from "file-saver"
 
+interface PDFFileItem {
+  id: string
+  file: File
+  images: string[]
+  converting: boolean
+  error?: string
+}
+
 export default function PDFToImagePage() {
-  const [pdfFile, setPdfFile] = useState<File | null>(null)
-  const [images, setImages] = useState<string[]>([])
-  const [converting, setConverting] = useState(false)
+  const [pdfFiles, setPdfFiles] = useState<PDFFileItem[]>([])
   const [format, setFormat] = useState<'png' | 'jpeg'>('png')
   const [quality, setQuality] = useState(0.95)
-  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const [scale, setScale] = useState(2.0)
+  const [folderCount, setFolderCount] = useState(0)
 
-  const onDrop = async (acceptedFiles: File[]) => {
-    const file = acceptedFiles[0]
-    if (!file) return
+  // Extract PDFs from folder (including nested folders)
+  const extractPDFsFromFileList = async (items: DataTransferItemList): Promise<File[]> => {
+    const pdfFiles: File[] = []
 
-    setPdfFile(file)
-    setImages([])
+    const traverseDirectory = async (entry: any): Promise<void> => {
+      if (entry.isFile) {
+        const file: File = await new Promise((resolve, reject) => {
+          entry.file(resolve, reject)
+        })
+        
+        if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+          pdfFiles.push(file)
+        }
+      } else if (entry.isDirectory) {
+        const dirReader = entry.createReader()
+        const entries: any[] = await new Promise((resolve, reject) => {
+          dirReader.readEntries(resolve, reject)
+        })
+        
+        for (const childEntry of entries) {
+          await traverseDirectory(childEntry)
+        }
+      }
+    }
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i]
+      if (item.kind === 'file') {
+        const entry = item.webkitGetAsEntry()
+        if (entry) {
+          await traverseDirectory(entry)
+        }
+      }
+    }
+
+    return pdfFiles
+  }
+
+  const onDrop = async (acceptedFiles: File[], fileRejections: any, event: any) => {
+    let filesToProcess: File[] = []
+    let folderDetected = false
+
+    if (event.dataTransfer && event.dataTransfer.items) {
+      const items = event.dataTransfer.items
+      
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i]
+        if (item.kind === 'file') {
+          const entry = item.webkitGetAsEntry()
+          if (entry && entry.isDirectory) {
+            folderDetected = true
+            break
+          }
+        }
+      }
+
+      if (folderDetected) {
+        filesToProcess = await extractPDFsFromFileList(items)
+        setFolderCount(prev => prev + 1)
+      } else {
+        filesToProcess = acceptedFiles
+      }
+    } else {
+      filesToProcess = acceptedFiles
+    }
+
+    if (filesToProcess.length === 0) {
+      if (folderDetected) {
+        alert('ไม่พบไฟล์ PDF ในโฟลเดอร์ที่เลือก')
+      }
+      return
+    }
+
+    const newFiles: PDFFileItem[] = filesToProcess.map(file => ({
+      id: Date.now().toString() + Math.random(),
+      file,
+      images: [],
+      converting: false
+    }))
+
+    setPdfFiles(prev => [...prev, ...newFiles])
+    
+    if (folderDetected) {
+      alert(`พบ ${filesToProcess.length} ไฟล์ PDF ในโฟลเดอร์`)
+    }
   }
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
@@ -33,92 +118,136 @@ export default function PDFToImagePage() {
     accept: {
       'application/pdf': ['.pdf']
     },
-    multiple: false
+    multiple: true
   })
 
-  const convertToImages = async () => {
-    if (!pdfFile) return
+  const removeFile = (id: string) => {
+    setPdfFiles(prev => prev.filter(f => f.id !== id))
+  }
 
-    setConverting(true)
-    setImages([])
+  const clearAll = () => {
+    setPdfFiles([])
+    setFolderCount(0)
+  }
+
+  const convertSingleFile = async (id: string) => {
+    const fileIndex = pdfFiles.findIndex(f => f.id === id)
+    if (fileIndex === -1) return
+
+    const updatedFiles = [...pdfFiles]
+    updatedFiles[fileIndex].converting = true
+    setPdfFiles(updatedFiles)
 
     try {
-      const arrayBuffer = await pdfFile.arrayBuffer()
-      const pdfDoc = await PDFDocument.load(arrayBuffer)
-      const pageCount = pdfDoc.getPageCount()
+      // Dynamic import pdf.js
+      const pdfjsLib = await import('pdfjs-dist')
+      pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`
+
+      const arrayBuffer = await updatedFiles[fileIndex].file.arrayBuffer()
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise
       const convertedImages: string[] = []
 
-      // Note: This is a simplified version
-      // For full PDF rendering, you'd need pdf.js or similar library
-      // Here we'll create placeholder images with page info
-      for (let i = 0; i < pageCount; i++) {
-        const canvas = document.createElement('canvas')
-        const ctx = canvas.getContext('2d')
-        if (!ctx) continue
+      for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+        const page = await pdf.getPage(pageNum)
+        const viewport = page.getViewport({ scale })
 
-        // Create a simple placeholder image
-        canvas.width = 800
-        canvas.height = 1000
-        
-        // White background
-        ctx.fillStyle = '#ffffff'
-        ctx.fillRect(0, 0, canvas.width, canvas.height)
-        
-        // Draw border
-        ctx.strokeStyle = '#cccccc'
-        ctx.lineWidth = 2
-        ctx.strokeRect(0, 0, canvas.width, canvas.height)
-        
-        // Draw text
-        ctx.fillStyle = '#333333'
-        ctx.font = '48px Arial'
-        ctx.textAlign = 'center'
-        ctx.fillText(`Page ${i + 1} of ${pageCount}`, canvas.width / 2, canvas.height / 2 - 50)
-        
-        ctx.font = '24px Arial'
-        ctx.fillStyle = '#666666'
-        ctx.fillText(pdfFile.name, canvas.width / 2, canvas.height / 2 + 20)
-        ctx.fillText('(Preview - Install pdf.js for full rendering)', canvas.width / 2, canvas.height / 2 + 60)
+        const canvas = document.createElement('canvas')
+        const context = canvas.getContext('2d')
+        if (!context) continue
+
+        canvas.width = viewport.width
+        canvas.height = viewport.height
+
+        await page.render({
+          canvasContext: context,
+          viewport: viewport,
+          canvas: canvas,
+        } as any).promise
 
         const mimeType = format === 'jpeg' ? 'image/jpeg' : 'image/png'
         const imageData = canvas.toDataURL(mimeType, quality)
         convertedImages.push(imageData)
       }
 
-      setImages(convertedImages)
-    } catch (error) {
-      console.error('Error converting PDF:', error)
-      alert('เกิดข้อผิดพลาดในการแปลง PDF กรุณาลองใหม่อีกครั้ง')
-    } finally {
-      setConverting(false)
+      updatedFiles[fileIndex].images = convertedImages
+      updatedFiles[fileIndex].converting = false
+      updatedFiles[fileIndex].error = undefined
+    } catch (error: any) {
+      updatedFiles[fileIndex].converting = false
+      updatedFiles[fileIndex].error = error.message
+    }
+
+    setPdfFiles(updatedFiles)
+  }
+
+  const convertAll = async () => {
+    for (const file of pdfFiles) {
+      if (file.images.length === 0 && !file.converting) {
+        await convertSingleFile(file.id)
+      }
     }
   }
 
-  const downloadSingle = (imageData: string, index: number) => {
+  const downloadSingleImage = (imageData: string, fileName: string, pageNumber: number) => {
     const link = document.createElement('a')
-    link.download = `${pdfFile?.name.replace('.pdf', '')}-page-${index + 1}.${format}`
+    link.download = `${fileName.replace('.pdf', '')}-page-${pageNumber}.${format}`
     link.href = imageData
     link.click()
   }
 
-  const downloadAll = async () => {
-    if (images.length === 0) return
+  const downloadFileImages = async (fileItem: PDFFileItem) => {
+    if (fileItem.images.length === 0) return
 
+    if (fileItem.images.length === 1) {
+      downloadSingleImage(fileItem.images[0], fileItem.file.name, 1)
+      return
+    }
+
+    // Create ZIP
     const zip = new JSZip()
-    const fileName = pdfFile?.name.replace('.pdf', '') || 'document'
+    const folder = zip.folder(fileItem.file.name.replace('.pdf', ''))
 
-    images.forEach((imageData, index) => {
-      const base64Data = imageData.split(',')[1]
-      zip.file(`${fileName}-page-${index + 1}.${format}`, base64Data, { base64: true })
-    })
+    for (let i = 0; i < fileItem.images.length; i++) {
+      const base64Data = fileItem.images[i].split(',')[1]
+      folder?.file(`page-${i + 1}.${format}`, base64Data, { base64: true })
+    }
 
-    const blob = await zip.generateAsync({ type: 'blob' })
-    saveAs(blob, `${fileName}-images.zip`)
+    const zipBlob = await zip.generateAsync({ type: 'blob' })
+    saveAs(zipBlob, `${fileItem.file.name.replace('.pdf', '')}-images.zip`)
   }
+
+  const downloadAll = async () => {
+    const convertedFiles = pdfFiles.filter(f => f.images.length > 0)
+    
+    if (convertedFiles.length === 0) return
+
+    if (convertedFiles.length === 1) {
+      await downloadFileImages(convertedFiles[0])
+      return
+    }
+
+    // Create master ZIP
+    const zip = new JSZip()
+
+    for (const fileItem of convertedFiles) {
+      const folder = zip.folder(fileItem.file.name.replace('.pdf', ''))
+      
+      for (let i = 0; i < fileItem.images.length; i++) {
+        const base64Data = fileItem.images[i].split(',')[1]
+        folder?.file(`page-${i + 1}.${format}`, base64Data, { base64: true })
+      }
+    }
+
+    const zipBlob = await zip.generateAsync({ type: 'blob' })
+    saveAs(zipBlob, 'all-pdf-images.zip')
+  }
+
+  const convertedCount = pdfFiles.filter(f => f.images.length > 0).length
+  const totalImages = pdfFiles.reduce((sum, f) => sum + f.images.length, 0)
 
   return (
     <div className="min-h-screen py-24 px-4">
-      <div className="container mx-auto max-w-6xl">
+      <div className="container mx-auto max-w-7xl">
         {/* Back Button */}
         <motion.div
           initial={{ opacity: 0, x: -20 }}
@@ -137,7 +266,7 @@ export default function PDFToImagePage() {
           animate={{ opacity: 1, y: 0 }}
         >
           <div className="flex items-center gap-4 mb-4">
-            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-[var(--primary-500)] to-[var(--primary-600)] flex items-center justify-center shadow-lg shadow-[var(--primary-500)]/20">
+            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center shadow-lg shadow-blue-500/20">
               <ImageIcon className="w-8 h-8 text-white" />
             </div>
             <div>
@@ -145,86 +274,80 @@ export default function PDFToImagePage() {
                 PDF เป็นรูปภาพ
               </h1>
               <p className="text-[var(--text-secondary)] mt-1">
-                แปลงหน้า PDF เป็นรูปภาพ PNG หรือ JPEG
+                แปลง PDF เป็น PNG/JPEG • รองรับหลายไฟล์และโฟลเดอร์ 📁
               </p>
             </div>
           </div>
         </motion.div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Left: Upload & Settings */}
           <div className="space-y-6">
             {/* Upload */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.1 }}
-          >
-            <Card variant="glass">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Sparkles className="w-5 h-5 text-[var(--primary-500)]" />
-                  อัพโหลดไฟล์ PDF
-                </CardTitle>
-                <CardDescription>เลือกไฟล์ PDF ที่ต้องการแปลง</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div
-                  {...getRootProps()}
-                  className={`
-                    border-2 border-dashed rounded-2xl p-10 text-center cursor-pointer transition-all
-                    ${isDragActive 
-                      ? 'border-[var(--primary-500)] bg-[var(--primary-500)]/5' 
-                      : 'border-[var(--border-default)] hover:border-[var(--primary-500)]'
-                    }
-                  `}
-                >
-                  <input {...getInputProps()} />
-                  <Upload className="w-16 h-16 mx-auto mb-4 text-[var(--text-muted)]" />
-                  {isDragActive ? (
-                    <p className="text-[var(--primary-500)] font-medium text-lg">วางไฟล์ PDF ที่นี่...</p>
-                  ) : (
-                    <div>
-                      <p className="font-semibold text-[var(--text-primary)] mb-2 text-lg">
-                        ลากไฟล์ PDF มาวางที่นี่
-                      </p>
-                      <p className="text-sm text-[var(--text-muted)] mb-4">
-                        หรือคลิกเพื่อเลือกไฟล์
-                      </p>
-                      <Button variant="secondary" size="sm">
-                        เลือกไฟล์ PDF
-                      </Button>
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.1 }}
+            >
+              <Card variant="glass">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Sparkles className="w-5 h-5 text-[var(--primary-500)]" />
+                    อัพโหลด PDF
+                  </CardTitle>
+                  <CardDescription>ลากไฟล์ หรือ โฟลเดอร์ มาวางที่นี่</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div
+                    {...getRootProps()}
+                    className={`
+                      border-2 border-dashed rounded-2xl p-12 text-center cursor-pointer transition-all
+                      ${isDragActive 
+                        ? 'border-[var(--primary-500)] bg-[var(--primary-500)]/5' 
+                        : 'border-[var(--border-default)] hover:border-[var(--primary-500)]'
+                      }
+                    `}
+                  >
+                    <input {...getInputProps()} />
+                    <div className="flex items-center justify-center gap-3 mb-4">
+                      <FileText className="w-12 h-12 text-[var(--text-muted)]" />
+                      <Folder className="w-12 h-12 text-[var(--primary-500)]" />
+                    </div>
+                    {isDragActive ? (
+                      <p className="text-[var(--primary-500)] font-medium text-lg">วางไฟล์หรือโฟลเดอร์ที่นี่...</p>
+                    ) : (
+                      <div>
+                        <p className="font-semibold text-[var(--text-primary)] mb-2">
+                          ลากไฟล์ PDF หรือโฟลเดอร์มาวางที่นี่
+                        </p>
+                        <p className="text-sm text-[var(--text-muted)] mb-4">
+                          รองรับโฟลเดอร์ซ้อนหลายชั้น 📂
+                        </p>
+                        <Button variant="secondary">
+                          <Upload className="w-5 h-5" />
+                          เลือกไฟล์หรือโฟลเดอร์
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Folder Info */}
+                  {folderCount > 0 && (
+                    <div className="mt-4 p-3 rounded-lg bg-[var(--primary-500)]/10 border border-[var(--primary-500)]/20">
+                      <div className="flex items-center gap-2 text-[var(--primary-500)]">
+                        <Folder className="w-5 h-5" />
+                        <span className="text-sm font-medium">
+                          ได้รับไฟล์จาก {folderCount} โฟลเดอร์
+                        </span>
+                      </div>
                     </div>
                   )}
-                </div>
-
-                {pdfFile && (
-                  <motion.div 
-                    className="mt-4 p-4 rounded-xl bg-[var(--bg-surface)] border border-[var(--border-default)]"
-                    initial={{ opacity: 0, scale: 0.95 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="w-12 h-12 rounded-xl bg-[var(--primary-500)]/10 flex items-center justify-center">
-                        <FileText className="w-6 h-6 text-[var(--primary-500)]" />
-                      </div>
-                      <div className="flex-1">
-                        <p className="font-semibold text-[var(--text-primary)]">
-                          {pdfFile.name}
-                        </p>
-                        <p className="text-sm text-[var(--text-muted)]">
-                          {(pdfFile.size / 1024).toFixed(2)} KB
-                        </p>
-                      </div>
-                    </div>
-                  </motion.div>
-                )}
-              </CardContent>
-            </Card>
-          </motion.div>
+                </CardContent>
+              </Card>
+            </motion.div>
 
             {/* Settings */}
-            {pdfFile && images.length === 0 && (
+            {pdfFiles.length > 0 && (
               <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -232,203 +355,283 @@ export default function PDFToImagePage() {
               >
                 <Card variant="glass">
                   <CardHeader>
-                    <CardTitle>ตั้งค่า</CardTitle>
-                    <CardDescription>เลือกรูปแบบและคุณภาพ</CardDescription>
+                    <CardTitle>การตั้งค่า</CardTitle>
+                    <CardDescription>ปรับแต่งการแปลงรูปภาพ</CardDescription>
                   </CardHeader>
-                  <CardContent className="space-y-6">
-                  {/* Format */}
-                  <div>
-                    <label className="block text-sm font-semibold text-[var(--text-primary)] mb-3">
-                      รูปแบบ
-                    </label>
-                    <div className="grid grid-cols-2 gap-3">
-                      {[
-                        { value: 'png', label: 'PNG', desc: 'คุณภาพสูง' },
-                        { value: 'jpeg', label: 'JPEG', desc: 'ขนาดเล็ก' },
-                      ].map((f) => (
-                        <label
-                          key={f.value}
-                          className={`
-                            flex items-center gap-3 p-4 rounded-xl cursor-pointer transition-all
-                            ${format === f.value
-                              ? 'bg-[var(--primary-500)]/10 border-2 border-[var(--primary-500)]'
-                              : 'glass border border-[var(--glass-border)] hover:border-[var(--primary-500)]'
-                            }
-                          `}
-                        >
-                          <input
-                            type="radio"
-                            name="format"
-                            value={f.value}
-                            checked={format === f.value}
-                            onChange={() => setFormat(f.value as any)}
-                            className="w-5 h-5 accent-[var(--primary-500)]"
-                          />
-                          <div className="flex-1">
-                            <p className="font-bold text-[var(--text-primary)]">
-                              {f.label}
-                            </p>
-                            <p className="text-xs text-[var(--text-secondary)]">
-                              {f.desc}
-                            </p>
-                          </div>
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Quality (for JPEG) */}
-                  {format === 'jpeg' && (
+                  <CardContent className="space-y-4">
+                    {/* Format */}
                     <div>
-                      <label className="block text-sm font-semibold text-[var(--text-primary)] mb-3">
-                        คุณภาพ: <span className="text-[var(--primary-500)]">{Math.round(quality * 100)}%</span>
+                      <label className="block text-sm font-medium text-[var(--text-primary)] mb-2">
+                        รูปแบบไฟล์
+                      </label>
+                      <div className="grid grid-cols-2 gap-3">
+                        {[
+                          { value: 'png' as const, label: 'PNG', desc: 'คุณภาพสูง' },
+                          { value: 'jpeg' as const, label: 'JPEG', desc: 'ไฟล์เล็ก' },
+                        ].map((fmt) => (
+                          <button
+                            key={fmt.value}
+                            onClick={() => setFormat(fmt.value)}
+                            className={`
+                              p-3 rounded-xl border-2 transition-all text-left
+                              ${format === fmt.value
+                                ? 'border-[var(--primary-500)] bg-[var(--primary-500)]/10'
+                                : 'border-[var(--border-default)] hover:border-[var(--primary-500)]/50'
+                              }
+                            `}
+                          >
+                            <p className="font-semibold text-[var(--text-primary)]">
+                              {fmt.label}
+                            </p>
+                            <p className="text-xs text-[var(--text-muted)]">
+                              {fmt.desc}
+                            </p>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Quality */}
+                    {format === 'jpeg' && (
+                      <div>
+                        <label className="block text-sm font-medium text-[var(--text-primary)] mb-2">
+                          คุณภาพ: {Math.round(quality * 100)}%
+                        </label>
+                        <input
+                          type="range"
+                          min="0.5"
+                          max="1"
+                          step="0.05"
+                          value={quality}
+                          onChange={(e) => setQuality(parseFloat(e.target.value))}
+                          className="w-full"
+                        />
+                      </div>
+                    )}
+
+                    {/* Scale */}
+                    <div>
+                      <label className="block text-sm font-medium text-[var(--text-primary)] mb-2">
+                        ความละเอียด: {scale}x
                       </label>
                       <input
                         type="range"
-                        min="0.5"
-                        max="1"
-                        step="0.05"
-                        value={quality}
-                        onChange={(e) => setQuality(Number(e.target.value))}
-                        className="w-full h-2 rounded-full appearance-none cursor-pointer"
-                        style={{
-                          background: `linear-gradient(to right, var(--primary-500) 0%, var(--primary-500) ${quality * 100}%, var(--bg-elevated) ${quality * 100}%, var(--bg-elevated) 100%)`
-                        }}
+                        min="1"
+                        max="3"
+                        step="0.5"
+                        value={scale}
+                        onChange={(e) => setScale(parseFloat(e.target.value))}
+                        className="w-full"
                       />
                     </div>
-                  )}
 
-                  <Button
-                    onClick={convertToImages}
-                    disabled={converting}
-                    isLoading={converting}
-                    className="w-full h-12"
-                  >
-                    <ImageIcon className="w-5 h-5" />
-                    {converting ? 'กำลังแปลง...' : 'แปลงเป็นรูปภาพ'}
-                  </Button>
-                </CardContent>
-              </Card>
-              </motion.div>
-            )}
-          </div>
+                    {/* Actions */}
+                    <div className="space-y-3 pt-4">
+                      <Button
+                        onClick={convertAll}
+                        disabled={convertedCount === pdfFiles.length}
+                        className="w-full"
+                      >
+                        <ImageIcon className="w-5 h-5" />
+                        แปลงทั้งหมด ({pdfFiles.length} ไฟล์)
+                      </Button>
 
-          {/* Right: Preview & Results */}
-          <div className="lg:col-span-2 space-y-6">
-            {/* PDF Preview */}
-            {pdfFile && !images.length && (
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.2 }}
-              >
-                <Card variant="glass">
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                      <Eye className="w-5 h-5 text-[var(--primary-500)]" />
-                      ตัวอย่าง PDF
-                    </CardTitle>
-                    <CardDescription>ดูไฟล์ก่อนแปลง</CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <PDFViewer file={pdfFile} className="h-[500px]" />
+                      {convertedCount > 0 && (
+                        <Button
+                          onClick={downloadAll}
+                          variant="secondary"
+                          className="w-full"
+                        >
+                          <Download className="w-5 h-5" />
+                          ดาวน์โหลดทั้งหมด ({totalImages} รูป)
+                        </Button>
+                      )}
+
+                      <Button
+                        onClick={clearAll}
+                        variant="ghost"
+                        className="w-full"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                        ลบทั้งหมด
+                      </Button>
+                    </div>
+
+                    {/* Stats */}
+                    {convertedCount > 0 && (
+                      <div className="p-4 rounded-xl bg-gradient-to-r from-blue-500/10 to-cyan-500/10 border border-blue-500/20">
+                        <div className="text-center">
+                          <p className="text-3xl font-bold text-blue-500 mb-1">
+                            {totalImages}
+                          </p>
+                          <p className="text-sm text-[var(--text-muted)]">
+                            รูปภาพที่แปลงแล้ว
+                          </p>
+                        </div>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               </motion.div>
             )}
+          </div>
 
-            {/* Results */}
-            {images.length > 0 && (
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-            >
-              <Card variant="glass">
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <CardTitle>ผลลัพธ์</CardTitle>
-                      <CardDescription>
-                        แปลงแล้ว {images.length} หน้า
-                      </CardDescription>
+          {/* Right: File List & Results */}
+          <div className="space-y-6">
+            {pdfFiles.length > 0 ? (
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.3 }}
+              >
+                <Card variant="glass">
+                  <CardHeader>
+                    <CardTitle>ไฟล์ทั้งหมด ({pdfFiles.length})</CardTitle>
+                    <CardDescription>
+                      แปลงแล้ว {convertedCount} ไฟล์ • {totalImages} รูป
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-4 max-h-[700px] overflow-y-auto">
+                      {pdfFiles.map((fileItem, index) => (
+                        <motion.div
+                          key={fileItem.id}
+                          initial={{ opacity: 0, x: -20 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          transition={{ delay: index * 0.05 }}
+                          className="p-4 rounded-xl border border-[var(--border-default)] bg-[var(--bg-surface)]"
+                        >
+                          {/* File Header */}
+                          <div className="flex items-start gap-3 mb-3">
+                            <div className="w-10 h-10 rounded-lg bg-[var(--primary-500)]/10 flex items-center justify-center flex-shrink-0">
+                              <FileText className="w-5 h-5 text-[var(--primary-500)]" />
+                            </div>
+
+                            <div className="flex-1 min-w-0">
+                              <p className="font-medium text-[var(--text-primary)] truncate">
+                                {fileItem.file.name}
+                              </p>
+                              <p className="text-xs text-[var(--text-muted)]">
+                                {formatFileSize(fileItem.file.size)}
+                                {fileItem.images.length > 0 && (
+                                  <span className="ml-2 text-blue-500 font-medium">
+                                    • {fileItem.images.length} รูป
+                                  </span>
+                                )}
+                              </p>
+                              {fileItem.error && (
+                                <p className="text-xs text-red-500 mt-1">{fileItem.error}</p>
+                              )}
+                            </div>
+
+                            {/* Actions */}
+                            <div className="flex items-center gap-2">
+                              {fileItem.converting ? (
+                                <div className="w-8 h-8 rounded-lg bg-[var(--primary-500)]/10 flex items-center justify-center">
+                                  <div className="w-4 h-4 border-2 border-[var(--primary-500)] border-t-transparent rounded-full animate-spin" />
+                                </div>
+                              ) : fileItem.images.length > 0 ? (
+                                <button
+                                  onClick={() => downloadFileImages(fileItem)}
+                                  className="p-2 hover:bg-[var(--bg-hover)] rounded-lg transition-colors"
+                                  title="ดาวน์โหลด"
+                                >
+                                  <Download className="w-4 h-4 text-green-500" />
+                                </button>
+                              ) : (
+                                <button
+                                  onClick={() => convertSingleFile(fileItem.id)}
+                                  className="p-2 hover:bg-[var(--bg-hover)] rounded-lg transition-colors"
+                                  title="แปลง"
+                                >
+                                  <ImageIcon className="w-4 h-4 text-[var(--text-secondary)]" />
+                                </button>
+                              )}
+                              <button
+                                onClick={() => removeFile(fileItem.id)}
+                                className="p-2 hover:bg-red-500/10 rounded-lg transition-colors"
+                                title="ลบ"
+                              >
+                                <Trash2 className="w-4 h-4 text-red-500" />
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Image Gallery */}
+                          {fileItem.images.length > 0 && (
+                            <div className="grid grid-cols-3 gap-2">
+                              {fileItem.images.map((img, imgIndex) => (
+                                <div
+                                  key={imgIndex}
+                                  className="aspect-[3/4] rounded-lg overflow-hidden border border-[var(--border-default)] bg-white cursor-pointer hover:opacity-75 transition-opacity"
+                                  onClick={() => downloadSingleImage(img, fileItem.file.name, imgIndex + 1)}
+                                >
+                                  <img
+                                    src={img}
+                                    alt={`Page ${imgIndex + 1}`}
+                                    className="w-full h-full object-cover"
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </motion.div>
+                      ))}
                     </div>
-                    <Button onClick={downloadAll} variant="primary">
-                      <Download className="w-5 h-5" />
-                      ดาวน์โหลดทั้งหมด (ZIP)
-                    </Button>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                    {images.map((imageData, index) => (
-                      <motion.div
-                        key={index}
-                        initial={{ opacity: 0, scale: 0.9 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        transition={{ delay: index * 0.05 }}
-                        className="group relative"
-                      >
-                        <div className="aspect-[3/4] rounded-xl overflow-hidden border-2 border-[var(--border-default)] bg-white">
-                          <img
-                            src={imageData}
-                            alt={`Page ${index + 1}`}
-                            className="w-full h-full object-contain"
-                          />
-                        </div>
-                        <div className="mt-2 flex items-center justify-between">
-                          <p className="text-sm font-medium text-[var(--text-primary)]">
-                            หน้า {index + 1}
-                          </p>
-                          <Button
-                            onClick={() => downloadSingle(imageData, index)}
-                            variant="ghost"
-                            size="sm"
-                          >
-                            <Download className="w-4 h-4" />
-                          </Button>
-                        </div>
-                      </motion.div>
-                    ))}
-                  </div>
-
-                  <div className="mt-6 flex gap-3">
-                    <Button
-                      onClick={() => {
-                        setPdfFile(null)
-                        setImages([])
-                      }}
-                      variant="secondary"
-                      className="flex-1"
-                    >
-                      แปลงไฟล์ใหม่
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            </motion.div>
+                  </CardContent>
+                </Card>
+              </motion.div>
+            ) : (
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.3 }}
+              >
+                <Card variant="glass">
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <ImageIcon className="w-5 h-5 text-[var(--primary-500)]" />
+                      ผลลัพธ์
+                    </CardTitle>
+                    <CardDescription>รูปภาพที่แปลงจะแสดงที่นี่</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="aspect-[3/4] rounded-xl border-2 border-dashed border-[var(--border-default)] flex items-center justify-center bg-[var(--bg-surface)]">
+                      <div className="text-center p-8">
+                        <ImageIcon className="w-16 h-16 mx-auto mb-4 text-[var(--text-muted)]" />
+                        <p className="text-[var(--text-muted)]">
+                          อัพโหลดไฟล์เพื่อเริ่มแปลง
+                        </p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              </motion.div>
             )}
           </div>
         </div>
 
-        {/* Note */}
+        {/* Features */}
         <motion.div 
-          className="mt-10 p-6 rounded-2xl glass border border-[var(--glass-border)]"
+          className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-10"
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.3 }}
+          transition={{ delay: 0.4 }}
         >
-          <h3 className="font-bold text-[var(--text-primary)] mb-3">
-            ℹ️ หมายเหตุ
-          </h3>
-          <p className="text-sm text-[var(--text-secondary)]">
-            เวอร์ชันนี้เป็น Preview - สำหรับการแปลงที่สมบูรณ์ ควรติดตั้ง pdf.js library เพิ่มเติม
-            ปัจจุบันแสดง placeholder ของแต่ละหน้า
-          </p>
+          {[
+            { icon: "📁", title: "รองรับโฟลเดอร์", desc: "ลากโฟลเดอร์เข้ามาได้เลย" },
+            { icon: "🗂️", title: "ซ้อนหลายชั้น", desc: "หาไฟล์ในโฟลเดอร์ย่อยอัตโนมัติ" },
+            { icon: "🖼️", title: "หลายรูปแบบ", desc: "PNG หรือ JPEG" },
+            { icon: "📦", title: "ZIP อัตโนมัติ", desc: "รวมรูปเป็น ZIP" },
+          ].map((feature, i) => (
+            <div key={i} className="p-5 rounded-2xl glass border border-[var(--glass-border)] hover:border-[var(--primary-500)]/30 transition-colors">
+              <div className="text-3xl mb-3">{feature.icon}</div>
+              <h4 className="font-bold text-[var(--text-primary)] mb-1">{feature.title}</h4>
+              <p className="text-sm text-[var(--text-secondary)]">{feature.desc}</p>
+            </div>
+          ))}
         </motion.div>
       </div>
     </div>
   )
 }
-
-
-

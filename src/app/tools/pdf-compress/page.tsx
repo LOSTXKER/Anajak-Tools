@@ -3,29 +3,118 @@
 import { useState } from "react"
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/Card"
 import { Button } from "@/components/ui/Button"
-import { FileText, Upload, Download, ArrowLeft, Minimize2, TrendingDown, Sparkles, Eye } from "lucide-react"
+import { FileText, Upload, Download, ArrowLeft, Minimize2, TrendingDown, Sparkles, Eye, Folder, Trash2 } from "lucide-react"
 import { useDropzone } from "react-dropzone"
 import { PDFDocument } from "pdf-lib"
 import { formatFileSize } from "@/lib/utils"
 import { PDFViewer } from "@/components/pdf/PDFViewer"
 import Link from "next/link"
 import { motion } from "framer-motion"
+import JSZip from "jszip"
+import { saveAs } from "file-saver"
+
+interface PDFFileItem {
+  id: string
+  file: File
+  originalSize: number
+  compressedBlob?: Blob
+  compressedSize?: number
+  compressing: boolean
+  error?: string
+}
 
 export default function PDFCompressPage() {
-  const [pdfFile, setPdfFile] = useState<File | null>(null)
-  const [compressedBlob, setCompressedBlob] = useState<Blob | null>(null)
-  const [originalSize, setOriginalSize] = useState(0)
-  const [compressedSize, setCompressedSize] = useState(0)
-  const [compressing, setCompressing] = useState(false)
+  const [pdfFiles, setPdfFiles] = useState<PDFFileItem[]>([])
   const [compressionLevel, setCompressionLevel] = useState<'low' | 'medium' | 'high'>('medium')
+  const [folderCount, setFolderCount] = useState(0)
+  const [previewFile, setPreviewFile] = useState<File | Blob | null>(null)
 
-  const onDrop = async (acceptedFiles: File[]) => {
-    const file = acceptedFiles[0]
-    if (!file) return
+  // Extract PDFs from folder (including nested folders)
+  const extractPDFsFromFileList = async (items: DataTransferItemList): Promise<File[]> => {
+    const pdfFiles: File[] = []
 
-    setPdfFile(file)
-    setOriginalSize(file.size)
-    setCompressedBlob(null)
+    const traverseDirectory = async (entry: any): Promise<void> => {
+      if (entry.isFile) {
+        const file: File = await new Promise((resolve, reject) => {
+          entry.file(resolve, reject)
+        })
+        
+        if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+          pdfFiles.push(file)
+        }
+      } else if (entry.isDirectory) {
+        const dirReader = entry.createReader()
+        const entries: any[] = await new Promise((resolve, reject) => {
+          dirReader.readEntries(resolve, reject)
+        })
+        
+        for (const childEntry of entries) {
+          await traverseDirectory(childEntry)
+        }
+      }
+    }
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i]
+      if (item.kind === 'file') {
+        const entry = item.webkitGetAsEntry()
+        if (entry) {
+          await traverseDirectory(entry)
+        }
+      }
+    }
+
+    return pdfFiles
+  }
+
+  const onDrop = async (acceptedFiles: File[], fileRejections: any, event: any) => {
+    let filesToProcess: File[] = []
+    let folderDetected = false
+
+    // Check if folder was dropped
+    if (event.dataTransfer && event.dataTransfer.items) {
+      const items = event.dataTransfer.items
+      
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i]
+        if (item.kind === 'file') {
+          const entry = item.webkitGetAsEntry()
+          if (entry && entry.isDirectory) {
+            folderDetected = true
+            break
+          }
+        }
+      }
+
+      if (folderDetected) {
+        filesToProcess = await extractPDFsFromFileList(items)
+        setFolderCount(prev => prev + 1)
+      } else {
+        filesToProcess = acceptedFiles
+      }
+    } else {
+      filesToProcess = acceptedFiles
+    }
+
+    if (filesToProcess.length === 0) {
+      if (folderDetected) {
+        alert('ไม่พบไฟล์ PDF ในโฟลเดอร์ที่เลือก')
+      }
+      return
+    }
+
+    const newFiles: PDFFileItem[] = filesToProcess.map(file => ({
+      id: Date.now().toString() + Math.random(),
+      file,
+      originalSize: file.size,
+      compressing: false
+    }))
+
+    setPdfFiles(prev => [...prev, ...newFiles])
+    
+    if (folderDetected) {
+      alert(`พบ ${filesToProcess.length} ไฟล์ PDF ในโฟลเดอร์`)
+    }
   }
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
@@ -33,16 +122,28 @@ export default function PDFCompressPage() {
     accept: {
       'application/pdf': ['.pdf']
     },
-    multiple: false
+    multiple: true
   })
 
-  const compressPDF = async () => {
-    if (!pdfFile) return
+  const removeFile = (id: string) => {
+    setPdfFiles(prev => prev.filter(f => f.id !== id))
+  }
 
-    setCompressing(true)
+  const clearAll = () => {
+    setPdfFiles([])
+    setFolderCount(0)
+  }
+
+  const compressSingleFile = async (id: string) => {
+    const fileIndex = pdfFiles.findIndex(f => f.id === id)
+    if (fileIndex === -1) return
+
+    const updatedFiles = [...pdfFiles]
+    updatedFiles[fileIndex].compressing = true
+    setPdfFiles(updatedFiles)
 
     try {
-      const arrayBuffer = await pdfFile.arrayBuffer()
+      const arrayBuffer = await updatedFiles[fileIndex].file.arrayBuffer()
       const pdfDoc = await PDFDocument.load(arrayBuffer)
 
       // Save with compression
@@ -53,29 +154,66 @@ export default function PDFCompressPage() {
       })
 
       const blob = new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' })
-      setCompressedBlob(blob)
-      setCompressedSize(blob.size)
-    } catch (error) {
-      console.error('Error compressing PDF:', error)
-      alert('เกิดข้อผิดพลาดในการบีบอัด PDF กรุณาลองใหม่อีกครั้ง')
-    } finally {
-      setCompressing(false)
+      
+      updatedFiles[fileIndex].compressedBlob = blob
+      updatedFiles[fileIndex].compressedSize = blob.size
+      updatedFiles[fileIndex].compressing = false
+      updatedFiles[fileIndex].error = undefined
+    } catch (error: any) {
+      updatedFiles[fileIndex].compressing = false
+      updatedFiles[fileIndex].error = error.message
+    }
+
+    setPdfFiles(updatedFiles)
+  }
+
+  const compressAll = async () => {
+    for (const file of pdfFiles) {
+      if (!file.compressedBlob && !file.compressing) {
+        await compressSingleFile(file.id)
+      }
     }
   }
 
-  const downloadCompressed = () => {
-    if (!compressedBlob) return
+  const downloadSingle = (fileItem: PDFFileItem) => {
+    if (!fileItem.compressedBlob) return
 
-    const url = URL.createObjectURL(compressedBlob)
+    const url = URL.createObjectURL(fileItem.compressedBlob)
     const link = document.createElement('a')
     link.href = url
-    link.download = `compressed-${pdfFile?.name || 'document.pdf'}`
+    link.download = `compressed-${fileItem.file.name}`
     link.click()
     URL.revokeObjectURL(url)
   }
 
-  const savingsPercent = originalSize > 0 
-    ? Math.round(((originalSize - compressedSize) / originalSize) * 100)
+  const downloadAll = async () => {
+    const compressedFiles = pdfFiles.filter(f => f.compressedBlob)
+    
+    if (compressedFiles.length === 0) return
+
+    if (compressedFiles.length === 1) {
+      downloadSingle(compressedFiles[0])
+      return
+    }
+
+    // Create ZIP file
+    const zip = new JSZip()
+    
+    for (const fileItem of compressedFiles) {
+      if (fileItem.compressedBlob) {
+        zip.file(`compressed-${fileItem.file.name}`, fileItem.compressedBlob)
+      }
+    }
+
+    const zipBlob = await zip.generateAsync({ type: 'blob' })
+    saveAs(zipBlob, 'compressed-pdfs.zip')
+  }
+
+  const totalOriginalSize = pdfFiles.reduce((sum, f) => sum + f.originalSize, 0)
+  const totalCompressedSize = pdfFiles.reduce((sum, f) => sum + (f.compressedSize || 0), 0)
+  const compressedCount = pdfFiles.filter(f => f.compressedBlob).length
+  const savingsPercent = totalOriginalSize > 0 && totalCompressedSize > 0
+    ? Math.round(((totalOriginalSize - totalCompressedSize) / totalOriginalSize) * 100)
     : 0
 
   return (
@@ -99,7 +237,7 @@ export default function PDFCompressPage() {
           animate={{ opacity: 1, y: 0 }}
         >
           <div className="flex items-center gap-4 mb-4">
-            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-[var(--primary-500)] to-[var(--primary-600)] flex items-center justify-center shadow-lg shadow-[var(--primary-500)]/20">
+            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-purple-500 to-purple-600 flex items-center justify-center shadow-lg shadow-purple-500/20">
               <Minimize2 className="w-8 h-8 text-white" />
             </div>
             <div>
@@ -107,163 +245,80 @@ export default function PDFCompressPage() {
                 บีบอัด PDF
               </h1>
               <p className="text-[var(--text-secondary)] mt-1">
-                ลดขนาดไฟล์ PDF โดยไม่เสียคุณภาพมากนัก
+                ลดขนาดไฟล์ PDF • รองรับหลายไฟล์และโฟลเดอร์ 📁
               </p>
             </div>
           </div>
         </motion.div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Left: Upload & Settings */}
           <div className="space-y-6">
-            {/* Upload */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.1 }}
-          >
-            <Card variant="glass">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Sparkles className="w-5 h-5 text-[var(--primary-500)]" />
-                  อัพโหลดไฟล์ PDF
-                </CardTitle>
-                <CardDescription>เลือกไฟล์ PDF ที่ต้องการบีบอัด</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div
-                  {...getRootProps()}
-                  className={`
-                    border-2 border-dashed rounded-2xl p-10 text-center cursor-pointer transition-all
-                    ${isDragActive 
-                      ? 'border-[var(--primary-500)] bg-[var(--primary-500)]/5' 
-                      : 'border-[var(--border-default)] hover:border-[var(--primary-500)]'
-                    }
-                  `}
-                >
-                  <input {...getInputProps()} />
-                  <Upload className="w-16 h-16 mx-auto mb-4 text-[var(--text-muted)]" />
-                  {isDragActive ? (
-                    <p className="text-[var(--primary-500)] font-medium text-lg">วางไฟล์ PDF ที่นี่...</p>
-                  ) : (
-                    <div>
-                      <p className="font-semibold text-[var(--text-primary)] mb-2 text-lg">
-                        ลากไฟล์ PDF มาวางที่นี่
-                      </p>
-                      <p className="text-sm text-[var(--text-muted)] mb-4">
-                        หรือคลิกเพื่อเลือกไฟล์
-                      </p>
-                      <Button variant="secondary" size="sm">
-                        เลือกไฟล์ PDF
-                      </Button>
-                    </div>
-                  )}
-                </div>
-
-                {pdfFile && (
-                  <motion.div 
-                    className="mt-4 p-4 rounded-xl bg-[var(--bg-surface)] border border-[var(--border-default)]"
-                    initial={{ opacity: 0, scale: 0.95 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="w-12 h-12 rounded-xl bg-[var(--primary-500)]/10 flex items-center justify-center">
-                        <FileText className="w-6 h-6 text-[var(--primary-500)]" />
-                      </div>
-                      <div className="flex-1">
-                        <p className="font-semibold text-[var(--text-primary)]">
-                          {pdfFile.name}
-                        </p>
-                        <p className="text-sm text-[var(--text-muted)]">
-                          ขนาด: {formatFileSize(originalSize)}
-                        </p>
-                      </div>
-                    </div>
-                  </motion.div>
-                )}
-              </CardContent>
-            </Card>
-          </motion.div>
-
-          {/* Settings */}
-          {pdfFile && !compressedBlob && (
+            {/* Upload Section */}
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.2 }}
+              transition={{ delay: 0.1 }}
             >
               <Card variant="glass">
                 <CardHeader>
-                  <CardTitle>ระดับการบีบอัด</CardTitle>
-                  <CardDescription>เลือกระดับการบีบอัดที่ต้องการ</CardDescription>
+                  <CardTitle className="flex items-center gap-2">
+                    <Sparkles className="w-5 h-5 text-[var(--primary-500)]" />
+                    อัพโหลด PDF
+                  </CardTitle>
+                  <CardDescription>ลากไฟล์ หรือ โฟลเดอร์ มาวางที่นี่</CardDescription>
                 </CardHeader>
-                <CardContent className="space-y-3">
-                  {[
-                    { value: 'low', label: 'ต่ำ', desc: 'คุณภาพสูง, ไฟล์ใหญ่กว่า' },
-                    { value: 'medium', label: 'กลาง', desc: 'สมดุลระหว่างขนาดและคุณภาพ (แนะนำ)' },
-                    { value: 'high', label: 'สูง', desc: 'ไฟล์เล็กสุด, อาจเสียคุณภาพเล็กน้อย' },
-                  ].map((level) => (
-                    <label
-                      key={level.value}
-                      className={`
-                        flex items-center gap-3 p-4 rounded-xl cursor-pointer transition-all
-                        ${compressionLevel === level.value
-                          ? 'bg-[var(--primary-500)]/10 border-2 border-[var(--primary-500)]'
-                          : 'glass border border-[var(--glass-border)] hover:border-[var(--primary-500)]'
-                        }
-                      `}
-                    >
-                      <input
-                        type="radio"
-                        name="compression"
-                        value={level.value}
-                        checked={compressionLevel === level.value}
-                        onChange={() => setCompressionLevel(level.value as any)}
-                        className="w-5 h-5 accent-[var(--primary-500)]"
-                      />
-                      <div className="flex-1">
-                        <p className="font-semibold text-[var(--text-primary)]">
-                          {level.label}
-                        </p>
-                        <p className="text-sm text-[var(--text-secondary)]">
-                          {level.desc}
-                        </p>
-                      </div>
-                    </label>
-                  ))}
-                </CardContent>
-              </Card>
-            </motion.div>
-          )}
-
-          {/* Compress Button */}
-          {pdfFile && !compressedBlob && (
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.3 }}
-            >
-              <Card variant="glass">
-                <CardContent className="pt-6">
-                  <Button
-                    onClick={compressPDF}
-                    disabled={compressing}
-                    isLoading={compressing}
-                    className="w-full h-14 text-lg"
+                <CardContent>
+                  <div
+                    {...getRootProps()}
+                    className={`
+                      border-2 border-dashed rounded-2xl p-12 text-center cursor-pointer transition-all
+                      ${isDragActive 
+                        ? 'border-[var(--primary-500)] bg-[var(--primary-500)]/5' 
+                        : 'border-[var(--border-default)] hover:border-[var(--primary-500)]'
+                      }
+                    `}
                   >
-                    <Minimize2 className="w-6 h-6" />
-                    {compressing ? 'กำลังบีบอัด...' : 'บีบอัด PDF'}
-                  </Button>
+                    <input {...getInputProps()} />
+                    <div className="flex items-center justify-center gap-3 mb-4">
+                      <FileText className="w-12 h-12 text-[var(--text-muted)]" />
+                      <Folder className="w-12 h-12 text-[var(--primary-500)]" />
+                    </div>
+                    {isDragActive ? (
+                      <p className="text-[var(--primary-500)] font-medium text-lg">วางไฟล์หรือโฟลเดอร์ที่นี่...</p>
+                    ) : (
+                      <div>
+                        <p className="font-semibold text-[var(--text-primary)] mb-2">
+                          ลากไฟล์ PDF หรือโฟลเดอร์มาวางที่นี่
+                        </p>
+                        <p className="text-sm text-[var(--text-muted)] mb-4">
+                          รองรับโฟลเดอร์ซ้อนหลายชั้น 📂
+                        </p>
+                        <Button variant="secondary">
+                          <Upload className="w-5 h-5" />
+                          เลือกไฟล์หรือโฟลเดอร์
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Folder Info */}
+                  {folderCount > 0 && (
+                    <div className="mt-4 p-3 rounded-lg bg-[var(--primary-500)]/10 border border-[var(--primary-500)]/20">
+                      <div className="flex items-center gap-2 text-[var(--primary-500)]">
+                        <Folder className="w-5 h-5" />
+                        <span className="text-sm font-medium">
+                          ได้รับไฟล์จาก {folderCount} โฟลเดอร์
+                        </span>
+                      </div>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </motion.div>
-          )}
-          </div>
 
-          {/* Right: Preview & Results */}
-          <div className="lg:col-span-2 space-y-6">
-            {/* Preview */}
-            {pdfFile && (
+            {/* Compression Level */}
+            {pdfFiles.length > 0 && (
               <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -271,114 +326,251 @@ export default function PDFCompressPage() {
               >
                 <Card variant="glass">
                   <CardHeader>
+                    <CardTitle>ระดับการบีบอัด</CardTitle>
+                    <CardDescription>เลือกระดับการบีบอัดที่ต้องการ</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-3 gap-3">
+                      {[
+                        { value: 'low' as const, label: 'ต่ำ', desc: 'ประหยัด 10-20%' },
+                        { value: 'medium' as const, label: 'กลาง', desc: 'ประหยัด 20-40%' },
+                        { value: 'high' as const, label: 'สูง', desc: 'ประหยัด 40-60%' },
+                      ].map((level) => (
+                        <button
+                          key={level.value}
+                          onClick={() => setCompressionLevel(level.value)}
+                          className={`
+                            p-4 rounded-xl border-2 transition-all text-left
+                            ${compressionLevel === level.value
+                              ? 'border-[var(--primary-500)] bg-[var(--primary-500)]/10'
+                              : 'border-[var(--border-default)] hover:border-[var(--primary-500)]/50'
+                            }
+                          `}
+                        >
+                          <p className="font-semibold text-[var(--text-primary)] mb-1">
+                            {level.label}
+                          </p>
+                          <p className="text-xs text-[var(--text-muted)]">
+                            {level.desc}
+                          </p>
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="mt-6 space-y-3">
+                      <Button
+                        onClick={compressAll}
+                        disabled={compressedCount === pdfFiles.length}
+                        className="w-full"
+                      >
+                        <Minimize2 className="w-5 h-5" />
+                        บีบอัดทั้งหมด ({pdfFiles.length} ไฟล์)
+                      </Button>
+
+                      {compressedCount > 0 && (
+                        <Button
+                          onClick={downloadAll}
+                          variant="secondary"
+                          className="w-full"
+                        >
+                          <Download className="w-5 h-5" />
+                          ดาวน์โหลดทั้งหมด ({compressedCount} ไฟล์)
+                        </Button>
+                      )}
+
+                      <Button
+                        onClick={clearAll}
+                        variant="ghost"
+                        className="w-full"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                        ลบทั้งหมด
+                      </Button>
+                    </div>
+
+                    {/* Stats */}
+                    {compressedCount > 0 && (
+                      <div className="mt-4 p-4 rounded-xl bg-gradient-to-r from-purple-500/10 to-pink-500/10 border border-purple-500/20">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-sm text-[var(--text-secondary)]">ประหยัดได้</span>
+                          <span className="text-2xl font-bold text-purple-500">
+                            {savingsPercent}%
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between text-xs text-[var(--text-muted)]">
+                          <span>{formatFileSize(totalOriginalSize)}</span>
+                          <span>→</span>
+                          <span>{formatFileSize(totalCompressedSize)}</span>
+                        </div>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </motion.div>
+            )}
+          </div>
+
+          {/* Right: File List & Preview */}
+          <div className="space-y-6">
+            {pdfFiles.length > 0 ? (
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.3 }}
+              >
+                <Card variant="glass">
+                  <CardHeader>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <CardTitle>ไฟล์ทั้งหมด ({pdfFiles.length})</CardTitle>
+                        <CardDescription>
+                          บีบอัดแล้ว {compressedCount} ไฟล์
+                        </CardDescription>
+                      </div>
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-2 max-h-[600px] overflow-y-auto">
+                      {pdfFiles.map((fileItem, index) => {
+                        const savings = fileItem.compressedSize
+                          ? Math.round(((fileItem.originalSize - fileItem.compressedSize) / fileItem.originalSize) * 100)
+                          : 0
+
+                        return (
+                          <motion.div
+                            key={fileItem.id}
+                            initial={{ opacity: 0, x: -20 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            transition={{ delay: index * 0.05 }}
+                            className="p-3 rounded-xl border border-[var(--border-default)] bg-[var(--bg-surface)] hover:border-[var(--primary-500)]/50 transition-all"
+                          >
+                            <div className="flex items-start gap-3">
+                              {/* Icon */}
+                              <div className="w-10 h-10 rounded-lg bg-[var(--primary-500)]/10 flex items-center justify-center flex-shrink-0">
+                                <FileText className="w-5 h-5 text-[var(--primary-500)]" />
+                              </div>
+
+                              {/* Info */}
+                              <div className="flex-1 min-w-0">
+                                <p className="font-medium text-[var(--text-primary)] truncate text-sm">
+                                  {fileItem.file.name}
+                                </p>
+                                <div className="flex items-center gap-2 text-xs text-[var(--text-muted)] mt-1">
+                                  <span>{formatFileSize(fileItem.originalSize)}</span>
+                                  {fileItem.compressedSize && (
+                                    <>
+                                      <span>→</span>
+                                      <span className="text-purple-500 font-medium">
+                                        {formatFileSize(fileItem.compressedSize)}
+                                      </span>
+                                      <span className="text-green-500 font-medium">
+                                        (-{savings}%)
+                                      </span>
+                                    </>
+                                  )}
+                                </div>
+                                {fileItem.error && (
+                                  <p className="text-xs text-red-500 mt-1">{fileItem.error}</p>
+                                )}
+                              </div>
+
+                              {/* Actions */}
+                              <div className="flex items-center gap-2">
+                                {fileItem.compressing ? (
+                                  <div className="w-8 h-8 rounded-lg bg-[var(--primary-500)]/10 flex items-center justify-center">
+                                    <div className="w-4 h-4 border-2 border-[var(--primary-500)] border-t-transparent rounded-full animate-spin" />
+                                  </div>
+                                ) : fileItem.compressedBlob ? (
+                                  <>
+                                    <button
+                                      onClick={() => setPreviewFile(fileItem.compressedBlob!)}
+                                      className="p-2 hover:bg-[var(--bg-hover)] rounded-lg transition-colors"
+                                      title="ดูตัวอย่าง"
+                                    >
+                                      <Eye className="w-4 h-4 text-[var(--text-secondary)]" />
+                                    </button>
+                                    <button
+                                      onClick={() => downloadSingle(fileItem)}
+                                      className="p-2 hover:bg-[var(--bg-hover)] rounded-lg transition-colors"
+                                      title="ดาวน์โหลด"
+                                    >
+                                      <Download className="w-4 h-4 text-green-500" />
+                                    </button>
+                                  </>
+                                ) : (
+                                  <button
+                                    onClick={() => compressSingleFile(fileItem.id)}
+                                    className="p-2 hover:bg-[var(--bg-hover)] rounded-lg transition-colors"
+                                    title="บีบอัด"
+                                  >
+                                    <Minimize2 className="w-4 h-4 text-[var(--text-secondary)]" />
+                                  </button>
+                                )}
+                                <button
+                                  onClick={() => removeFile(fileItem.id)}
+                                  className="p-2 hover:bg-red-500/10 rounded-lg transition-colors"
+                                  title="ลบ"
+                                >
+                                  <Trash2 className="w-4 h-4 text-red-500" />
+                                </button>
+                              </div>
+                            </div>
+                          </motion.div>
+                        )
+                      })}
+                    </div>
+                  </CardContent>
+                </Card>
+              </motion.div>
+            ) : (
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.3 }}
+              >
+                <Card variant="glass">
+                  <CardHeader>
                     <CardTitle className="flex items-center gap-2">
                       <Eye className="w-5 h-5 text-[var(--primary-500)]" />
-                      {compressedBlob ? 'ไฟล์ที่บีบอัดแล้ว' : 'ไฟล์ต้นฉบับ'}
+                      ตัวอย่าง
                     </CardTitle>
                     <CardDescription>
-                      {compressedBlob ? 'ตรวจสอบไฟล์หลังบีบอัด' : 'ดูตัวอย่างไฟล์'}
+                      {previewFile ? 'กำลังแสดงไฟล์' : 'ยังไม่ได้เลือกไฟล์'}
                     </CardDescription>
                   </CardHeader>
                   <CardContent>
-                    <PDFViewer 
-                      file={compressedBlob || pdfFile} 
-                      className="h-[500px]" 
-                    />
+                    <div className="aspect-[3/4] rounded-xl border-2 border-dashed border-[var(--border-default)] flex items-center justify-center bg-[var(--bg-surface)]">
+                      <div className="text-center p-8">
+                        <Minimize2 className="w-16 h-16 mx-auto mb-4 text-[var(--text-muted)]" />
+                        <p className="text-[var(--text-muted)]">
+                          อัพโหลดไฟล์เพื่อเริ่มบีบอัด
+                        </p>
+                      </div>
+                    </div>
                   </CardContent>
                 </Card>
               </motion.div>
             )}
 
-            {/* Result */}
-            {compressedBlob && (
+            {/* Preview */}
+            {previewFile && (
               <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
               >
                 <Card variant="glass">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <TrendingDown className="w-5 h-5 text-emerald-500" />
-                    บีบอัดเสร็จแล้ว!
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  {/* Stats */}
-                  <div className="grid grid-cols-3 gap-4">
-                    <div className="text-center p-4 rounded-xl bg-[var(--bg-surface)]">
-                      <p className="text-xs text-[var(--text-muted)] mb-1">ขนาดเดิม</p>
-                      <p className="font-bold text-[var(--text-primary)]">
-                        {formatFileSize(originalSize)}
-                      </p>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <Eye className="w-5 h-5 text-[var(--primary-500)]" />
+                      ตัวอย่างไฟล์บีบอัด
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="rounded-xl overflow-hidden border border-[var(--border-default)] bg-white">
+                      <PDFViewer file={previewFile} />
                     </div>
-                    <div className="text-center p-4 rounded-xl bg-emerald-500/10">
-                      <p className="text-xs text-emerald-600 dark:text-emerald-400 mb-1">ลดลง</p>
-                      <p className="font-bold text-emerald-600 dark:text-emerald-400 text-xl">
-                        {savingsPercent}%
-                      </p>
-                    </div>
-                    <div className="text-center p-4 rounded-xl bg-[var(--bg-surface)]">
-                      <p className="text-xs text-[var(--text-muted)] mb-1">ขนาดใหม่</p>
-                      <p className="font-bold text-[var(--text-primary)]">
-                        {formatFileSize(compressedSize)}
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Visual Bar */}
-                  <div className="space-y-2">
-                    <div className="flex justify-between text-sm">
-                      <span className="text-[var(--text-muted)]">ก่อนบีบอัด</span>
-                      <span className="font-medium text-[var(--text-primary)]">{formatFileSize(originalSize)}</span>
-                    </div>
-                    <div className="h-3 bg-[var(--bg-surface)] rounded-full overflow-hidden">
-                      <div 
-                        className="h-full bg-gradient-to-r from-red-500 to-orange-500"
-                        style={{ width: '100%' }}
-                      />
-                    </div>
-                    
-                    <div className="flex justify-between text-sm">
-                      <span className="text-[var(--text-muted)]">หลังบีบอัด</span>
-                      <span className="font-medium text-emerald-500">{formatFileSize(compressedSize)}</span>
-                    </div>
-                    <div className="h-3 bg-[var(--bg-surface)] rounded-full overflow-hidden">
-                      <div 
-                        className="h-full bg-gradient-to-r from-emerald-500 to-emerald-600 transition-all duration-1000"
-                        style={{ width: `${100 - savingsPercent}%` }}
-                      />
-                    </div>
-                  </div>
-
-                  {/* Success Message */}
-                  <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
-                    <p className="text-sm text-emerald-600 dark:text-emerald-400 font-medium">
-                      ✓ ประหยัดพื้นที่ {formatFileSize(originalSize - compressedSize)} ({savingsPercent}%)
-                    </p>
-                  </div>
-
-                  {/* Download */}
-                  <div className="grid grid-cols-2 gap-3">
-                    <Button
-                      onClick={downloadCompressed}
-                      className="w-full h-12"
-                    >
-                      <Download className="w-5 h-5" />
-                      ดาวน์โหลด
-                    </Button>
-                    <Button
-                      onClick={() => {
-                        setPdfFile(null)
-                        setCompressedBlob(null)
-                      }}
-                      variant="secondary"
-                      className="w-full h-12"
-                    >
-                      บีบอัดไฟล์ใหม่
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
+                  </CardContent>
+                </Card>
               </motion.div>
             )}
           </div>
@@ -386,15 +578,16 @@ export default function PDFCompressPage() {
 
         {/* Features */}
         <motion.div 
-          className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-10"
+          className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-10"
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.4 }}
         >
           {[
-            { icon: "📉", title: "ลดขนาดไฟล์", desc: "ลดขนาดได้มากกว่า 50%" },
-            { icon: "🔒", title: "ปลอดภัย", desc: "ประมวลผลบนเครื่องคุณ" },
-            { icon: "⚡", title: "รวดเร็ว", desc: "บีบอัดได้ในไม่กี่วินาที" },
+            { icon: "📁", title: "รองรับโฟลเดอร์", desc: "ลากโฟลเดอร์เข้ามาได้เลย" },
+            { icon: "🗂️", title: "ซ้อนหลายชั้น", desc: "หาไฟล์ในโฟลเดอร์ย่อยอัตโนมัติ" },
+            { icon: "⚡", title: "หลายไฟล์", desc: "บีบอัดทีละหลายไฟล์" },
+            { icon: "📦", title: "ดาวน์โหลด ZIP", desc: "รวมไฟล์เป็น ZIP อัตโนมัติ" },
           ].map((feature, i) => (
             <div key={i} className="p-5 rounded-2xl glass border border-[var(--glass-border)] hover:border-[var(--primary-500)]/30 transition-colors">
               <div className="text-3xl mb-3">{feature.icon}</div>
@@ -407,4 +600,3 @@ export default function PDFCompressPage() {
     </div>
   )
 }
-

@@ -3,7 +3,7 @@
 import { useState } from "react"
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/Card"
 import { Button } from "@/components/ui/Button"
-import { FileText, Upload, Download, ArrowLeft, Unlock, Sparkles, Trash2, Lock, Eye, Key } from "lucide-react"
+import { FileText, Upload, Download, ArrowLeft, Unlock, Sparkles, Trash2, Lock, Eye, Key, Folder } from "lucide-react"
 import { useDropzone } from "react-dropzone"
 import { PDFDocument } from "pdf-lib"
 import { PDFViewer } from "@/components/pdf/PDFViewer"
@@ -24,13 +24,91 @@ export default function PDFUnlockPage() {
   const [unlocking, setUnlocking] = useState(false)
   const [previewFile, setPreviewFile] = useState<File | Blob | null>(null)
   const [useGlobalPassword, setUseGlobalPassword] = useState(true)
+  const [folderCount, setFolderCount] = useState(0)
 
-  const onDrop = (acceptedFiles: File[]) => {
-    const newFiles: PDFFile[] = acceptedFiles.map(file => ({
+  // Extract PDFs from folder (including nested folders)
+  const extractPDFsFromFileList = async (items: DataTransferItemList): Promise<File[]> => {
+    const pdfFiles: File[] = []
+
+    const traverseDirectory = async (entry: any): Promise<void> => {
+      if (entry.isFile) {
+        const file: File = await new Promise((resolve, reject) => {
+          entry.file(resolve, reject)
+        })
+        
+        if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+          pdfFiles.push(file)
+        }
+      } else if (entry.isDirectory) {
+        const dirReader = entry.createReader()
+        const entries: any[] = await new Promise((resolve, reject) => {
+          dirReader.readEntries(resolve, reject)
+        })
+        
+        for (const childEntry of entries) {
+          await traverseDirectory(childEntry)
+        }
+      }
+    }
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i]
+      if (item.kind === 'file') {
+        const entry = item.webkitGetAsEntry()
+        if (entry) {
+          await traverseDirectory(entry)
+        }
+      }
+    }
+
+    return pdfFiles
+  }
+
+  const onDrop = async (acceptedFiles: File[], fileRejections: any, event: any) => {
+    let filesToProcess: File[] = []
+    let folderDetected = false
+
+    // Check if folder was dropped
+    if (event.dataTransfer && event.dataTransfer.items) {
+      const items = event.dataTransfer.items
+      
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i]
+        if (item.kind === 'file') {
+          const entry = item.webkitGetAsEntry()
+          if (entry && entry.isDirectory) {
+            folderDetected = true
+            break
+          }
+        }
+      }
+
+      if (folderDetected) {
+        filesToProcess = await extractPDFsFromFileList(items)
+        setFolderCount(prev => prev + 1)
+      } else {
+        filesToProcess = acceptedFiles
+      }
+    } else {
+      filesToProcess = acceptedFiles
+    }
+
+    if (filesToProcess.length === 0) {
+      if (folderDetected) {
+        alert('ไม่พบไฟล์ PDF ในโฟลเดอร์ที่เลือก')
+      }
+      return
+    }
+
+    const newFiles: PDFFile[] = filesToProcess.map(file => ({
       file,
       unlocked: false
     }))
     setPdfFiles([...pdfFiles, ...newFiles])
+    
+    if (folderDetected) {
+      alert(`พบ ${filesToProcess.length} ไฟล์ PDF ในโฟลเดอร์`)
+    }
   }
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
@@ -133,7 +211,7 @@ export default function PDFUnlockPage() {
                 ปลดล็อค PDF
               </h1>
               <p className="text-[var(--text-secondary)] mt-1">
-                ถอดรหัสผ่าน PDF ทุกไฟล์ด้วยรหัสเดียว
+                ถอดรหัสผ่าน PDF ทุกไฟล์ด้วยรหัสเดียว • รองรับโฟลเดอร์ 📁
               </p>
             </div>
           </div>
@@ -154,7 +232,7 @@ export default function PDFUnlockPage() {
                     <Sparkles className="w-5 h-5 text-[var(--primary-500)]" />
                     อัพโหลดไฟล์ PDF
                   </CardTitle>
-                  <CardDescription>เลือก PDF ที่ต้องการปลดล็อค (รองรับหลายไฟล์)</CardDescription>
+                  <CardDescription>ลากไฟล์ หรือ โฟลเดอร์ มาวางที่นี่</CardDescription>
                 </CardHeader>
                 <CardContent>
                   <div
@@ -168,23 +246,39 @@ export default function PDFUnlockPage() {
                     `}
                   >
                     <input {...getInputProps()} />
-                    <Upload className="w-16 h-16 mx-auto mb-4 text-[var(--text-muted)]" />
+                    <div className="flex items-center justify-center gap-3 mb-4">
+                      <FileText className="w-12 h-12 text-[var(--text-muted)]" />
+                      <Folder className="w-12 h-12 text-[var(--primary-500)]" />
+                    </div>
                     {isDragActive ? (
-                      <p className="text-[var(--primary-500)] font-medium text-lg">วางไฟล์ PDF ที่นี่...</p>
+                      <p className="text-[var(--primary-500)] font-medium text-lg">วางไฟล์หรือโฟลเดอร์ที่นี่...</p>
                     ) : (
                       <div>
-                        <p className="font-semibold text-[var(--text-primary)] mb-2 text-lg">
-                          ลากไฟล์ PDF มาวางที่นี่
+                        <p className="font-semibold text-[var(--text-primary)] mb-2">
+                          ลากไฟล์ PDF หรือโฟลเดอร์มาวางที่นี่
                         </p>
                         <p className="text-sm text-[var(--text-muted)] mb-4">
-                          หรือคลิกเพื่อเลือกไฟล์ (รองรับหลายไฟล์)
+                          รองรับโฟลเดอร์ซ้อนหลายชั้น 📂
                         </p>
                         <Button variant="secondary" size="sm">
-                          เลือกไฟล์ PDF
+                          <Upload className="w-5 h-5" />
+                          เลือกไฟล์หรือโฟลเดอร์
                         </Button>
                       </div>
                     )}
                   </div>
+
+                  {/* Folder Info */}
+                  {folderCount > 0 && (
+                    <div className="mt-4 p-3 rounded-lg bg-[var(--primary-500)]/10 border border-[var(--primary-500)]/20">
+                      <div className="flex items-center gap-2 text-[var(--primary-500)]">
+                        <Folder className="w-5 h-5" />
+                        <span className="text-sm font-medium">
+                          ได้รับไฟล์จาก {folderCount} โฟลเดอร์
+                        </span>
+                      </div>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </motion.div>
