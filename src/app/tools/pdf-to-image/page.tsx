@@ -405,6 +405,7 @@ export default function PDFToImagePage() {
                   </div>
                 </CardContent>
               </Card>
+            </motion.div>
             )}
           </div>
         </div>

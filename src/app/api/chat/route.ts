@@ -39,10 +39,9 @@ Available tool categories:
 
 Always be respectful and provide accurate information. If you're unsure, say so.`,
       temperature: 0.7,
-      maxTokens: 2048,
     });
 
-    return result.toDataStreamResponse();
+    return result.toTextStreamResponse();
   } catch (error) {
     console.error('AI Chat Error:', error);
     return new Response(

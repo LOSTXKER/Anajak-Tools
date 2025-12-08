@@ -52,7 +52,7 @@ export default function PDFCompressPage() {
         objectsPerTick: compressionLevel === 'high' ? 50 : 100
       })
 
-      const blob = new Blob([pdfBytes], { type: 'application/pdf' })
+      const blob = new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' })
       setCompressedBlob(blob)
       setCompressedSize(blob.size)
     } catch (error) {

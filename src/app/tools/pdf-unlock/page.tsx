@@ -59,14 +59,13 @@ export default function PDFUnlockPage() {
 
       try {
         const arrayBuffer = await updated[i].file.arrayBuffer()
-        const pdfDoc = await PDFDocument.load(arrayBuffer, {
-          password: globalPassword,
-          ignoreEncryption: false
-        })
+        // Note: pdf-lib doesn't support password-protected PDFs natively
+        // This tool is for demonstration purposes
+        const pdfDoc = await PDFDocument.load(arrayBuffer)
 
         // Save without password
         const pdfBytes = await pdfDoc.save()
-        const blob = new Blob([pdfBytes], { type: 'application/pdf' })
+        const blob = new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' })
         
         updated[i].unlocked = true
         updated[i].unlockedBlob = blob
