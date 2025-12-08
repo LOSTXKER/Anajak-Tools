@@ -3,7 +3,7 @@
 import { useState } from "react"
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/Card"
 import { Button } from "@/components/ui/Button"
-import { FileText, Upload, Download, Trash2, GripVertical, Eye } from "lucide-react"
+import { FileText, Upload, Download, Trash2, GripVertical, Eye, Folder, ArrowLeft } from "lucide-react"
 import { useDropzone } from "react-dropzone"
 import { PDFDocument } from "pdf-lib"
 import { formatFileSize } from "@/lib/utils"
@@ -17,6 +17,7 @@ interface PDFFile {
   name: string
   size: number
   pages?: number
+  path?: string  // เก็บ path ของไฟล์
 }
 
 export default function PDFMergePage() {
@@ -24,11 +25,91 @@ export default function PDFMergePage() {
   const [merging, setMerging] = useState(false)
   const [previewFile, setPreviewFile] = useState<File | null>(null)
   const [showPreview, setShowPreview] = useState(false)
+  const [folderCount, setFolderCount] = useState(0)
 
-  const onDrop = async (acceptedFiles: File[]) => {
+  // ฟังก์ชันสำหรับดึงไฟล์ PDF จากโฟลเดอร์ (รวมโฟลเดอร์ย่อย)
+  const extractPDFsFromFileList = async (items: DataTransferItemList): Promise<File[]> => {
+    const pdfFiles: File[] = []
+
+    const traverseDirectory = async (entry: any): Promise<void> => {
+      if (entry.isFile) {
+        const file: File = await new Promise((resolve, reject) => {
+          entry.file(resolve, reject)
+        })
+        
+        // เช็คว่าเป็นไฟล์ PDF หรือไม่
+        if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+          pdfFiles.push(file)
+        }
+      } else if (entry.isDirectory) {
+        const dirReader = entry.createReader()
+        const entries: any[] = await new Promise((resolve, reject) => {
+          dirReader.readEntries(resolve, reject)
+        })
+        
+        for (const childEntry of entries) {
+          await traverseDirectory(childEntry)
+        }
+      }
+    }
+
+    // วนลูปผ่านทุก item
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i]
+      if (item.kind === 'file') {
+        const entry = item.webkitGetAsEntry()
+        if (entry) {
+          await traverseDirectory(entry)
+        }
+      }
+    }
+
+    return pdfFiles
+  }
+
+  const onDrop = async (acceptedFiles: File[], fileRejections: any, event: any) => {
+    let filesToProcess: File[] = []
+    let folderDetected = false
+
+    // ตรวจสอบว่ามีการลากโฟลเดอร์หรือไม่
+    if (event.dataTransfer && event.dataTransfer.items) {
+      const items = event.dataTransfer.items
+      
+      // เช็คว่ามีโฟลเดอร์หรือไม่
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i]
+        if (item.kind === 'file') {
+          const entry = item.webkitGetAsEntry()
+          if (entry && entry.isDirectory) {
+            folderDetected = true
+            break
+          }
+        }
+      }
+
+      if (folderDetected) {
+        // ถ้าเป็นโฟลเดอร์ ให้ดึงไฟล์ PDF ทั้งหมดออกมา
+        filesToProcess = await extractPDFsFromFileList(items)
+        setFolderCount(prev => prev + 1)
+      } else {
+        // ถ้าไม่ใช่โฟลเดอร์ ใช้ไฟล์ที่ได้รับตามปกติ
+        filesToProcess = acceptedFiles
+      }
+    } else {
+      // Fallback: ใช้ไฟล์ที่ได้รับตามปกติ
+      filesToProcess = acceptedFiles
+    }
+
+    if (filesToProcess.length === 0) {
+      if (folderDetected) {
+        alert('ไม่พบไฟล์ PDF ในโฟลเดอร์ที่เลือก')
+      }
+      return
+    }
+
     const newFiles: PDFFile[] = []
     
-    for (const file of acceptedFiles) {
+    for (const file of filesToProcess) {
       // Get page count
       let pages = 0
       try {
@@ -39,16 +120,24 @@ export default function PDFMergePage() {
         console.error('Error reading PDF:', error)
       }
 
+      // ดึง path จาก webkitRelativePath ถ้ามี
+      const path = (file as any).webkitRelativePath || file.name
+
       newFiles.push({
         id: Date.now().toString() + Math.random(),
         file,
         name: file.name,
         size: file.size,
-        pages
+        pages,
+        path
       })
     }
     
     setPdfFiles(prev => [...prev, ...newFiles])
+    
+    if (folderDetected) {
+      alert(`พบ ${filesToProcess.length} ไฟล์ PDF ในโฟลเดอร์`)
+    }
   }
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
@@ -56,11 +145,18 @@ export default function PDFMergePage() {
     accept: {
       'application/pdf': ['.pdf']
     },
-    multiple: true
+    multiple: true,
+    // เปิดการรับโฟลเดอร์
+    useFsAccessApi: false,
   })
 
   const removeFile = (id: string) => {
     setPdfFiles(prev => prev.filter(f => f.id !== id))
+  }
+
+  const clearAll = () => {
+    setPdfFiles([])
+    setFolderCount(0)
   }
 
   const mergePDFs = async () => {
@@ -98,21 +194,20 @@ export default function PDFMergePage() {
 
   const moveFile = (index: number, direction: 'up' | 'down') => {
     const newFiles = [...pdfFiles]
-    const newIndex = direction === 'up' ? index - 1 : index + 1
+    const targetIndex = direction === 'up' ? index - 1 : index + 1
     
-    if (newIndex < 0 || newIndex >= newFiles.length) return
+    if (targetIndex < 0 || targetIndex >= newFiles.length) return
     
-    [newFiles[index], newFiles[newIndex]] = [newFiles[newIndex], newFiles[index]]
+    [newFiles[index], newFiles[targetIndex]] = [newFiles[targetIndex], newFiles[index]]
     setPdfFiles(newFiles)
   }
 
-  const totalPages = pdfFiles.reduce((sum, file) => sum + (file.pages || 0), 0)
-  const totalSize = pdfFiles.reduce((sum, file) => sum + file.size, 0)
-
-  const openPreview = (file: File) => {
+  const togglePreview = (file: File | null) => {
     setPreviewFile(file)
-    setShowPreview(true)
+    setShowPreview(!!file)
   }
+
+  const totalPages = pdfFiles.reduce((sum, file) => sum + (file.pages || 0), 0)
 
   return (
     <div className="min-h-screen py-24 px-4">
@@ -123,7 +218,8 @@ export default function PDFMergePage() {
           animate={{ opacity: 1, x: 0 }}
         >
           <Link href="/tools" className="inline-flex items-center gap-2 text-[var(--text-secondary)] hover:text-[var(--primary-500)] transition-colors mb-8 group">
-            <span className="text-sm font-medium">← กลับไปหน้าเครื่องมือ</span>
+            <ArrowLeft className="w-4 h-4 group-hover:-translate-x-1 transition-transform" />
+            <span className="text-sm font-medium">กลับไปหน้าเครื่องมือ</span>
           </Link>
         </motion.div>
 
@@ -142,190 +238,252 @@ export default function PDFMergePage() {
                 รวม PDF
               </h1>
               <p className="text-[var(--text-secondary)] mt-1">
-                รวมไฟล์ PDF หลายไฟล์เป็นไฟล์เดียว
+                รวมหลายไฟล์ PDF เป็นไฟล์เดียว • รองรับการลากโฟลเดอร์ 📁
               </p>
             </div>
           </div>
         </motion.div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Left: Upload & Files */}
-          <div className="lg:col-span-2 space-y-6">
-
-            {/* Upload Area */}
-            <Card variant="glass">
-              <CardHeader>
-                <CardTitle>อัพโหลดไฟล์</CardTitle>
-                <CardDescription>เลือก PDF ที่ต้องการรวม</CardDescription>
-              </CardHeader>
-              <CardContent>
-          <div
-            {...getRootProps()}
-            className={`
-              border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all
-              ${isDragActive 
-                ? 'border-[var(--primary-500)] bg-[var(--primary-500)]/5' 
-                : 'border-[var(--border-default)] hover:border-[var(--primary-500)]'
-              }
-            `}
-          >
-            <input {...getInputProps()} />
-            <Upload className="w-12 h-12 mx-auto mb-4 text-[var(--text-muted)]" />
-            {isDragActive ? (
-              <p className="text-[var(--primary-500)] font-medium">วางไฟล์ PDF ที่นี่...</p>
-            ) : (
-              <div>
-                <p className="font-medium text-[var(--text-primary)] mb-2">
-                  ลากไฟล์ PDF มาวางที่นี่
-                </p>
-                <p className="text-sm text-[var(--text-muted)] mb-4">
-                  หรือคลิกเพื่อเลือกไฟล์ (สามารถเลือกหลายไฟล์)
-                </p>
-                <Button variant="secondary" size="sm">
-                  เลือกไฟล์ PDF
-                </Button>
-              </div>
-            )}
-          </div>
-              </CardContent>
-            </Card>
-
-            {/* Files List */}
-            {pdfFiles.length > 0 && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Left: Upload & File List */}
+          <div className="space-y-6">
+            {/* Upload Section */}
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.1 }}
+            >
               <Card variant="glass">
                 <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <CardTitle>ไฟล์ที่เลือก ({pdfFiles.length})</CardTitle>
-                      <CardDescription>
-                        {totalPages} หน้า • {formatFileSize(totalSize)}
-                      </CardDescription>
-                    </div>
-                    <Button
-                      onClick={() => setPdfFiles([])}
-                      variant="ghost"
-                      size="sm"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                      ล้างทั้งหมด
-                    </Button>
-                  </div>
+                  <CardTitle className="flex items-center gap-2">
+                    <Upload className="w-5 h-5 text-[var(--primary-500)]" />
+                    อัพโหลด PDF
+                  </CardTitle>
+                  <CardDescription>ลากไฟล์ หรือ โฟลเดอร์ มาวางที่นี่</CardDescription>
                 </CardHeader>
-                <CardContent className="space-y-2">
-                  {pdfFiles.map((pdfFile, index) => (
-                    <div
-                      key={pdfFile.id}
-                      className="flex items-center gap-3 p-3 rounded-lg glass border border-[var(--glass-border)] hover:border-[var(--primary-500)] transition-colors"
-                    >
-                      <div className="flex gap-1">
-                        <button
-                          onClick={() => moveFile(index, 'up')}
-                          disabled={index === 0}
-                          className="p-1 hover:bg-[var(--bg-surface)] rounded disabled:opacity-30 disabled:cursor-not-allowed"
-                        >
-                          <GripVertical className="w-4 h-4" />
-                        </button>
+                <CardContent>
+                  <div
+                    {...getRootProps()}
+                    className={`
+                      border-2 border-dashed rounded-2xl p-12 text-center cursor-pointer transition-all
+                      ${isDragActive 
+                        ? 'border-[var(--primary-500)] bg-[var(--primary-500)]/5' 
+                        : 'border-[var(--border-default)] hover:border-[var(--primary-500)]'
+                      }
+                    `}
+                  >
+                    <input {...getInputProps()} />
+                    <div className="flex flex-col items-center gap-4">
+                      <div className="flex items-center gap-3">
+                        <FileText className="w-12 h-12 text-[var(--text-muted)]" />
+                        <Folder className="w-12 h-12 text-[var(--primary-500)]" />
                       </div>
-
-                      <div className="w-10 h-10 rounded-lg bg-[var(--primary-500)]/10 flex items-center justify-center flex-shrink-0">
-                        <FileText className="w-5 h-5 text-[var(--primary-500)]" />
-                      </div>
-
-                      <div className="flex-1 min-w-0">
-                        <p className="font-medium text-sm text-[var(--text-primary)] truncate">
-                          {pdfFile.name}
+                      {isDragActive ? (
+                        <p className="text-[var(--primary-500)] font-medium text-lg">
+                          วางไฟล์หรือโฟลเดอร์ที่นี่...
                         </p>
-                        <p className="text-xs text-[var(--text-muted)]">
-                          {pdfFile.pages} หน้า • {formatFileSize(pdfFile.size)}
-                        </p>
-                      </div>
+                      ) : (
+                        <div>
+                          <p className="font-semibold text-[var(--text-primary)] mb-2">
+                            ลากไฟล์ PDF หรือโฟลเดอร์มาวางที่นี่
+                          </p>
+                          <p className="text-sm text-[var(--text-muted)] mb-4">
+                            รองรับโฟลเดอร์ซ้อนหลายชั้น 📂📂📂
+                          </p>
+                          <Button variant="secondary">
+                            <Upload className="w-5 h-5" />
+                            เลือกไฟล์หรือโฟลเดอร์
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
 
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-medium text-[var(--text-muted)] bg-[var(--bg-surface)] px-2 py-1 rounded">
-                          #{index + 1}
+                  {/* Folder Info */}
+                  {folderCount > 0 && (
+                    <div className="mt-4 p-3 rounded-lg bg-[var(--primary-500)]/10 border border-[var(--primary-500)]/20">
+                      <div className="flex items-center gap-2 text-[var(--primary-500)]">
+                        <Folder className="w-5 h-5" />
+                        <span className="text-sm font-medium">
+                          ได้รับไฟล์จาก {folderCount} โฟลเดอร์
                         </span>
-                        <button
-                          onClick={() => openPreview(pdfFile.file)}
-                          className="p-2 hover:bg-[var(--primary-500)]/10 rounded-lg text-[var(--primary-500)] transition-colors"
-                          title="ดู Preview"
-                        >
-                          <Eye className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => removeFile(pdfFile.id)}
-                          className="p-2 hover:bg-[var(--error)]/10 rounded-lg text-[var(--error)] transition-colors"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
                       </div>
                     </div>
-                  ))}
+                  )}
                 </CardContent>
               </Card>
-            )}
+            </motion.div>
 
+            {/* File List */}
+            {pdfFiles.length > 0 && (
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.2 }}
+              >
+                <Card variant="glass">
+                  <CardHeader>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <CardTitle>ไฟล์ที่เลือก ({pdfFiles.length} ไฟล์)</CardTitle>
+                        <CardDescription>รวม {totalPages} หน้า</CardDescription>
+                      </div>
+                      <Button 
+                        variant="ghost" 
+                        size="sm"
+                        onClick={clearAll}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                        ลบทั้งหมด
+                      </Button>
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-2 max-h-[400px] overflow-y-auto">
+                      {pdfFiles.map((pdfFile, index) => (
+                        <motion.div
+                          key={pdfFile.id}
+                          initial={{ opacity: 0, x: -20 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          transition={{ delay: index * 0.05 }}
+                          className="flex items-center gap-3 p-3 rounded-xl border border-[var(--border-default)] hover:border-[var(--primary-500)]/50 transition-all bg-[var(--bg-surface)]"
+                        >
+                          {/* Drag Handle */}
+                          <div className="flex flex-col gap-1">
+                            <button
+                              onClick={() => moveFile(index, 'up')}
+                              disabled={index === 0}
+                              className="p-1 hover:bg-[var(--bg-hover)] rounded disabled:opacity-30"
+                            >
+                              <GripVertical className="w-4 h-4 text-[var(--text-muted)] rotate-90" />
+                            </button>
+                            <button
+                              onClick={() => moveFile(index, 'down')}
+                              disabled={index === pdfFiles.length - 1}
+                              className="p-1 hover:bg-[var(--bg-hover)] rounded disabled:opacity-30"
+                            >
+                              <GripVertical className="w-4 h-4 text-[var(--text-muted)] -rotate-90" />
+                            </button>
+                          </div>
+
+                          {/* File Icon */}
+                          <div className="w-10 h-10 rounded-lg bg-[var(--primary-500)]/10 flex items-center justify-center flex-shrink-0">
+                            <FileText className="w-5 h-5 text-[var(--primary-500)]" />
+                          </div>
+
+                          {/* File Info */}
+                          <div className="flex-1 min-w-0">
+                            <p className="font-medium text-[var(--text-primary)] truncate">
+                              {pdfFile.name}
+                            </p>
+                            <div className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
+                              <span>{formatFileSize(pdfFile.size)}</span>
+                              {pdfFile.pages && (
+                                <>
+                                  <span>•</span>
+                                  <span>{pdfFile.pages} หน้า</span>
+                                </>
+                              )}
+                            </div>
+                            {/* Show path if it's from a folder */}
+                            {pdfFile.path && pdfFile.path !== pdfFile.name && (
+                              <p className="text-xs text-[var(--text-muted)] truncate mt-1 flex items-center gap-1">
+                                <Folder className="w-3 h-3" />
+                                {pdfFile.path}
+                              </p>
+                            )}
+                          </div>
+
+                          {/* Actions */}
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => togglePreview(pdfFile.file)}
+                              className="p-2 hover:bg-[var(--bg-hover)] rounded-lg transition-colors"
+                              title="ดูตัวอย่าง"
+                            >
+                              <Eye className="w-4 h-4 text-[var(--text-secondary)]" />
+                            </button>
+                            <button
+                              onClick={() => removeFile(pdfFile.id)}
+                              className="p-2 hover:bg-red-500/10 rounded-lg transition-colors"
+                              title="ลบ"
+                            >
+                              <Trash2 className="w-4 h-4 text-red-500" />
+                            </button>
+                          </div>
+                        </motion.div>
+                      ))}
+                    </div>
+
+                    {/* Merge Button */}
+                    <div className="mt-6 pt-4 border-t border-[var(--border-default)]">
+                      <Button
+                        onClick={mergePDFs}
+                        disabled={pdfFiles.length < 2 || merging}
+                        isLoading={merging}
+                        className="w-full"
+                        size="lg"
+                      >
+                        <Download className="w-5 h-5" />
+                        {merging ? 'กำลังรวม PDF...' : `รวม ${pdfFiles.length} ไฟล์`}
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              </motion.div>
+            )}
           </div>
 
-          {/* Right: Preview & Actions */}
+          {/* Right: Preview */}
           <div className="space-y-6">
-            {/* Preview */}
-            {pdfFiles.length > 0 && previewFile && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.3 }}
+            >
               <Card variant="glass">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
                     <Eye className="w-5 h-5 text-[var(--primary-500)]" />
-                    Preview
+                    ตัวอย่าง PDF
                   </CardTitle>
-                  <CardDescription>ดูตัวอย่างไฟล์</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <PDFViewer file={previewFile} className="h-[400px]" />
-                </CardContent>
-              </Card>
-            )}
-
-            {/* Merge Button */}
-            {pdfFiles.length >= 2 && (
-              <Card variant="glass">
-                <CardHeader>
-                  <CardTitle>พร้อมรวมไฟล์</CardTitle>
                   <CardDescription>
-                    {pdfFiles.length} ไฟล์ • {totalPages} หน้า
+                    {previewFile ? `กำลังแสดง: ${previewFile.name}` : 'คลิกไอคอน 👁️ เพื่อดูตัวอย่าง'}
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <Button
-                    onClick={mergePDFs}
-                    disabled={merging}
-                    isLoading={merging}
-                    className="w-full h-12"
-                  >
-                    <Download className="w-5 h-5" />
-                    {merging ? 'กำลังรวม PDF...' : 'รวม PDF'}
-                  </Button>
-
-                  <div className="mt-4 p-3 rounded-lg bg-[var(--success)]/10 border border-[var(--success)]/20">
-                    <p className="text-sm text-[var(--success)]">
-                      ✓ พร้อมรวม {pdfFiles.length} ไฟล์
-                    </p>
-                  </div>
+                  {previewFile ? (
+                    <div className="rounded-xl overflow-hidden border border-[var(--border-default)] bg-white">
+                      <PDFViewer file={previewFile} />
+                    </div>
+                  ) : (
+                    <div className="aspect-[3/4] rounded-xl border-2 border-dashed border-[var(--border-default)] flex items-center justify-center bg-[var(--bg-surface)]">
+                      <div className="text-center p-8">
+                        <Eye className="w-16 h-16 mx-auto mb-4 text-[var(--text-muted)]" />
+                        <p className="text-[var(--text-muted)]">
+                          ยังไม่ได้เลือกไฟล์
+                        </p>
+                      </div>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
-            )}
+            </motion.div>
           </div>
         </div>
 
         {/* Features */}
         <motion.div 
-          className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-10"
+          className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-10"
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.3 }}
+          transition={{ delay: 0.4 }}
         >
           {[
-            { icon: "⚡", title: "รวดเร็ว", desc: "ประมวลผลบนเครื่องคุณ" },
-            { icon: "🔒", title: "ปลอดภัย", desc: "ไม่ส่งข้อมูลออกไป" },
-            { icon: "👁️", title: "ดู Preview", desc: "ตรวจสอบก่อนรวม" },
+            { icon: "📁", title: "รองรับโฟลเดอร์", desc: "ลากโฟลเดอร์เข้ามาได้เลย" },
+            { icon: "🗂️", title: "ซ้อนหลายชั้น", desc: "หาไฟล์ในโฟลเดอร์ย่อยอัตโนมัติ" },
+            { icon: "🔀", title: "จัดเรียง", desc: "เลือกลำดับได้ตามต้องการ" },
+            { icon: "👁️", title: "Preview", desc: "ดูตัวอย่างก่อนรวม" },
           ].map((feature, i) => (
             <div key={i} className="p-5 rounded-2xl glass border border-[var(--glass-border)] hover:border-[var(--primary-500)]/30 transition-colors">
               <div className="text-3xl mb-3">{feature.icon}</div>
@@ -338,6 +496,3 @@ export default function PDFMergePage() {
     </div>
   )
 }
-
-
-
