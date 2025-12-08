@@ -225,12 +225,17 @@ export default function PDFToImagePage() {
 
             {/* Settings */}
             {pdfFile && images.length === 0 && (
-              <Card variant="glass">
-                <CardHeader>
-                  <CardTitle>ตั้งค่า</CardTitle>
-                  <CardDescription>เลือกรูปแบบและคุณภาพ</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-6">
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.2 }}
+              >
+                <Card variant="glass">
+                  <CardHeader>
+                    <CardTitle>ตั้งค่า</CardTitle>
+                    <CardDescription>เลือกรูปแบบและคุณภาพ</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-6">
                   {/* Format */}
                   <div>
                     <label className="block text-sm font-semibold text-[var(--text-primary)] mb-3">
@@ -304,6 +309,7 @@ export default function PDFToImagePage() {
                   </Button>
                 </CardContent>
               </Card>
+              </motion.div>
             )}
           </div>
 
