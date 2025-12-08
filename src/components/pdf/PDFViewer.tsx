@@ -1,7 +1,7 @@
 "use client"
 
-// Simplified PDF Viewer without external dependencies
-// For full PDF rendering, consider using PDF.js or other libraries
+import { useState, useEffect } from "react"
+import { Loader2 } from "lucide-react"
 
 interface PDFViewerProps {
   file: File | Blob | string | null
@@ -14,24 +14,101 @@ interface PDFViewerProps {
 
 export function PDFViewer({ 
   file, 
-  className, 
+  className = "", 
 }: PDFViewerProps) {
+  const [pdfUrl, setPdfUrl] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!file) {
+      setPdfUrl(null)
+      setLoading(false)
+      return
+    }
+
+    setLoading(true)
+    setError(null)
+
+    try {
+      let url: string
+
+      if (typeof file === 'string') {
+        // If it's already a URL
+        url = file
+      } else if (file instanceof File || file instanceof Blob) {
+        // Create object URL from File/Blob
+        url = URL.createObjectURL(file)
+      } else {
+        throw new Error('Invalid file type')
+      }
+
+      setPdfUrl(url)
+      setLoading(false)
+
+      // Cleanup function
+      return () => {
+        if (url && url.startsWith('blob:')) {
+          URL.revokeObjectURL(url)
+        }
+      }
+    } catch (err: any) {
+      console.error('Error loading PDF:', err)
+      setError(err.message || 'ไม่สามารถโหลด PDF ได้')
+      setLoading(false)
+    }
+  }, [file])
+
   if (!file) {
     return (
-      <div className={`flex items-center justify-center p-8 rounded-xl glass border border-[var(--glass-border)] ${className}`}>
+      <div className={`flex items-center justify-center p-8 rounded-xl bg-[var(--bg-surface)] border border-[var(--border-default)] ${className}`}>
         <p className="text-[var(--text-muted)]">ไม่มีไฟล์ PDF</p>
       </div>
     )
   }
 
-  return (
-    <div className={`flex items-center justify-center p-8 rounded-xl glass border border-[var(--glass-border)] ${className}`}>
-      <div className="text-center">
-        <p className="text-[var(--text-primary)] font-medium mb-2">📄 PDF File Ready</p>
-        <p className="text-sm text-[var(--text-muted)]">
-          Preview ต้องการ browser extension หรือ download ไฟล์เพื่อดู
-        </p>
+  if (loading) {
+    return (
+      <div className={`flex items-center justify-center p-8 rounded-xl bg-[var(--bg-surface)] border border-[var(--border-default)] ${className}`}>
+        <div className="text-center">
+          <Loader2 className="w-8 h-8 mx-auto mb-2 text-[var(--primary-500)] animate-spin" />
+          <p className="text-[var(--text-muted)]">กำลังโหลด PDF...</p>
+        </div>
       </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className={`flex items-center justify-center p-8 rounded-xl bg-red-500/10 border border-red-500/20 ${className}`}>
+        <div className="text-center">
+          <p className="text-red-500 font-medium mb-1">⚠️ เกิดข้อผิดพลาด</p>
+          <p className="text-sm text-[var(--text-muted)]">{error}</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (!pdfUrl) {
+    return (
+      <div className={`flex items-center justify-center p-8 rounded-xl bg-[var(--bg-surface)] border border-[var(--border-default)] ${className}`}>
+        <p className="text-[var(--text-muted)]">ไม่สามารถแสดง PDF ได้</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className={`relative w-full h-full min-h-[400px] rounded-xl overflow-hidden border border-[var(--border-default)] bg-white ${className}`}>
+      <iframe
+        src={pdfUrl}
+        className="w-full h-full min-h-[400px]"
+        title="PDF Preview"
+        style={{
+          border: 'none',
+          width: '100%',
+          height: '100%',
+        }}
+      />
     </div>
   )
 }
@@ -50,7 +127,7 @@ export function PDFThumbnail({
   pageNumber, 
   selected, 
   onClick, 
-  className 
+  className = ""
 }: PDFThumbnailProps) {
   return (
     <div
