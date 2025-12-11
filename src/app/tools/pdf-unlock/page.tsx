@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/Card"
 import { Button } from "@/components/ui/Button"
 import { FileText, Upload, Download, ArrowLeft, Unlock, Sparkles, Trash2, Lock, Eye, Key, Folder } from "lucide-react"
@@ -25,6 +25,15 @@ export default function PDFUnlockPage() {
   const [previewFile, setPreviewFile] = useState<File | Blob | null>(null)
   const [useGlobalPassword, setUseGlobalPassword] = useState(true)
   const [folderCount, setFolderCount] = useState(0)
+  const [pdfjsLib, setPdfjsLib] = useState<any>(null)
+
+  // Load PDF.js dynamically on client side only
+  useEffect(() => {
+    import('pdfjs-dist').then((pdfjs) => {
+      pdfjs.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.js`
+      setPdfjsLib(pdfjs)
+    })
+  }, [])
 
   // Extract PDFs from folder (including nested folders)
   const extractPDFsFromFileList = async (items: DataTransferItemList): Promise<File[]> => {
@@ -123,7 +132,68 @@ export default function PDFUnlockPage() {
     setPdfFiles(pdfFiles.filter((_, i) => i !== index))
   }
 
+  const unlockPDF = async (file: File, password: string): Promise<Blob> => {
+    if (!pdfjsLib) {
+      throw new Error('PDF.js is not loaded yet')
+    }
+
+    const arrayBuffer = await file.arrayBuffer()
+    
+    // Try to load with PDF.js first to handle password
+    const loadingTask = pdfjsLib.getDocument({
+      data: arrayBuffer,
+      password: password
+    })
+
+    const pdfDoc = await loadingTask.promise
+    const numPages = pdfDoc.numPages
+
+    // Create a new PDF document without password using pdf-lib
+    const newPdfDoc = await PDFDocument.create()
+
+    // Extract each page and add to new document
+    for (let pageNum = 1; pageNum <= numPages; pageNum++) {
+      const page = await pdfDoc.getPage(pageNum)
+      const viewport = page.getViewport({ scale: 2.0 })
+
+      // Create canvas to render page
+      const canvas = document.createElement('canvas')
+      const context = canvas.getContext('2d')!
+      canvas.width = viewport.width
+      canvas.height = viewport.height
+
+      // Render page to canvas
+      await page.render({
+        canvasContext: context,
+        viewport: viewport,
+        canvas: canvas
+      }).promise
+
+      // Convert canvas to image and add to new PDF
+      const imgData = canvas.toDataURL('image/png')
+      const imgBytes = await fetch(imgData).then(res => res.arrayBuffer())
+      const image = await newPdfDoc.embedPng(imgBytes)
+      
+      const newPage = newPdfDoc.addPage([viewport.width, viewport.height])
+      newPage.drawImage(image, {
+        x: 0,
+        y: 0,
+        width: viewport.width,
+        height: viewport.height
+      })
+    }
+
+    // Save the new PDF without password
+    const pdfBytes = await newPdfDoc.save()
+    return new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' })
+  }
+
   const unlockAllWithGlobalPassword = async () => {
+    if (!pdfjsLib) {
+      alert('กรุณารอสักครู่ ระบบกำลังโหลด...')
+      return
+    }
+
     if (!globalPassword.trim()) {
       alert('กรุณากรอกรหัสผ่าน')
       return
@@ -136,27 +206,32 @@ export default function PDFUnlockPage() {
       if (updated[i].unlocked) continue
 
       try {
-        const arrayBuffer = await updated[i].file.arrayBuffer()
-        // Note: pdf-lib doesn't support password-protected PDFs natively
-        // This tool is for demonstration purposes
-        const pdfDoc = await PDFDocument.load(arrayBuffer)
-
-        // Save without password
-        const pdfBytes = await pdfDoc.save()
-        const blob = new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' })
+        const unlockedBlob = await unlockPDF(updated[i].file, globalPassword)
         
         updated[i].unlocked = true
-        updated[i].unlockedBlob = blob
+        updated[i].unlockedBlob = unlockedBlob
         updated[i].error = undefined
       } catch (error: any) {
         updated[i].unlocked = false
-        updated[i].error = error.message.includes('password') || error.message.includes('decrypt')
-          ? 'รหัสผ่านไม่ถูกต้อง' 
-          : 'ไฟล์นี้ไม่มีการล็อก หรือเกิดข้อผิดพลาด'
+        
+        // Check for specific error types
+        if (error.name === 'PasswordException') {
+          updated[i].error = 'รหัสผ่านไม่ถูกต้อง'
+        } else if (error.message?.includes('password') || error.message?.includes('PasswordException')) {
+          updated[i].error = 'รหัสผ่านไม่ถูกต้อง'
+        } else if (error.message?.includes('Invalid PDF')) {
+          updated[i].error = 'ไฟล์ PDF ไม่ถูกต้องหรือเสียหาย'
+        } else {
+          updated[i].error = `เกิดข้อผิดพลาด: ${error.message || 'ไม่ทราบสาเหตุ'}`
+        }
+        
+        console.error(`Error unlocking ${updated[i].file.name}:`, error)
       }
+      
+      // Update UI after each file
+      setPdfFiles([...updated])
     }
 
-    setPdfFiles(updated)
     setUnlocking(false)
   }
 
@@ -336,12 +411,12 @@ export default function PDFUnlockPage() {
                     {/* Unlock Button */}
                     <Button
                       onClick={unlockAllWithGlobalPassword}
-                      disabled={unlocking || !globalPassword}
+                      disabled={unlocking || !globalPassword || !pdfjsLib}
                       isLoading={unlocking}
                       className="w-full h-14 text-lg"
                     >
                       <Unlock className="w-6 h-6" />
-                      {unlocking ? 'กำลังปลดล็อค...' : 'ปลดล็อคทั้งหมด'}
+                      {!pdfjsLib ? 'กำลังโหลด...' : unlocking ? 'กำลังปลดล็อค...' : 'ปลดล็อคทั้งหมด'}
                     </Button>
 
                     {/* Download All */}
