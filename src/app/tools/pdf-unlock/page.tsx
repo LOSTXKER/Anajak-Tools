@@ -273,12 +273,16 @@ export default function PDFUnlockPage() {
     URL.revokeObjectURL(url)
   }
 
-  const downloadAll = () => {
-    pdfFiles.forEach(pdfFile => {
-      if (pdfFile.unlocked && pdfFile.unlockedBlob) {
-        downloadSingle(pdfFile)
+  const downloadAll = async () => {
+    const filesToDownload = pdfFiles.filter(f => f.unlocked && f.unlockedBlob)
+    
+    for (let i = 0; i < filesToDownload.length; i++) {
+      downloadSingle(filesToDownload[i])
+      // Add delay between downloads to prevent browser blocking
+      if (i < filesToDownload.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 300))
       }
-    })
+    }
   }
 
   const unlockedCount = pdfFiles.filter(f => f.unlocked).length
