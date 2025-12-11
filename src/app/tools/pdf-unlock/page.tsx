@@ -30,7 +30,7 @@ export default function PDFUnlockPage() {
   // Load PDF.js dynamically on client side only
   useEffect(() => {
     import('pdfjs-dist').then((pdfjs) => {
-      pdfjs.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.js`
+      pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`
       setPdfjsLib(pdfjs)
     })
   }, [])
@@ -145,7 +145,14 @@ export default function PDFUnlockPage() {
       password: password
     })
 
-    const pdfDoc = await loadingTask.promise
+    // Add timeout for loading
+    const pdfDoc = await Promise.race([
+      loadingTask.promise,
+      new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Timeout: การโหลด PDF ใช้เวลานานเกินไป')), 30000)
+      )
+    ]) as any
+
     const numPages = pdfDoc.numPages
 
     // Create a new PDF document without password using pdf-lib
@@ -154,25 +161,35 @@ export default function PDFUnlockPage() {
     // Extract each page and add to new document
     for (let pageNum = 1; pageNum <= numPages; pageNum++) {
       const page = await pdfDoc.getPage(pageNum)
-      const viewport = page.getViewport({ scale: 2.0 })
+      // Use scale 1.5 for balance between quality and speed
+      const viewport = page.getViewport({ scale: 1.5 })
 
       // Create canvas to render page
       const canvas = document.createElement('canvas')
-      const context = canvas.getContext('2d')!
+      const context = canvas.getContext('2d')
+      if (!context) {
+        throw new Error('ไม่สามารถสร้าง canvas context ได้')
+      }
+      
       canvas.width = viewport.width
       canvas.height = viewport.height
 
-      // Render page to canvas
-      await page.render({
-        canvasContext: context,
-        viewport: viewport,
-        canvas: canvas
-      }).promise
+      // Render page to canvas with timeout
+      await Promise.race([
+        page.render({
+          canvasContext: context,
+          viewport: viewport,
+          canvas: canvas,
+        } as any).promise,
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error(`Timeout: หน้า ${pageNum} ใช้เวลานานเกินไป`)), 30000)
+        )
+      ])
 
-      // Convert canvas to image and add to new PDF
-      const imgData = canvas.toDataURL('image/png')
+      // Convert canvas to image and add to new PDF (use JPEG for faster processing)
+      const imgData = canvas.toDataURL('image/jpeg', 0.92)
       const imgBytes = await fetch(imgData).then(res => res.arrayBuffer())
-      const image = await newPdfDoc.embedPng(imgBytes)
+      const image = await newPdfDoc.embedJpg(imgBytes)
       
       const newPage = newPdfDoc.addPage([viewport.width, viewport.height])
       newPage.drawImage(image, {
@@ -214,15 +231,25 @@ export default function PDFUnlockPage() {
       } catch (error: any) {
         updated[i].unlocked = false
         
+        const errorMsg = error.message || ''
+        const errorName = error.name || ''
+        
         // Check for specific error types
-        if (error.name === 'PasswordException') {
+        if (errorName === 'PasswordException' || errorMsg.includes('password') || errorMsg.includes('Incorrect Password')) {
           updated[i].error = 'รหัสผ่านไม่ถูกต้อง'
-        } else if (error.message?.includes('password') || error.message?.includes('PasswordException')) {
-          updated[i].error = 'รหัสผ่านไม่ถูกต้อง'
-        } else if (error.message?.includes('Invalid PDF')) {
+        } else if (errorMsg.includes('No password given') || errorMsg.includes('need a password')) {
+          updated[i].error = 'ไฟล์นี้ต้องการรหัสผ่าน'
+        } else if (errorMsg.includes('Invalid PDF') || errorMsg.includes('Invalid XRef')) {
           updated[i].error = 'ไฟล์ PDF ไม่ถูกต้องหรือเสียหาย'
+        } else if (errorMsg.includes('Timeout')) {
+          updated[i].error = 'ใช้เวลานานเกินไป ลองใหม่อีกครั้ง'
+        } else if (errorMsg.includes('not encrypted')) {
+          // PDF is not encrypted, just copy it
+          updated[i].unlocked = true
+          updated[i].unlockedBlob = updated[i].file
+          updated[i].error = undefined
         } else {
-          updated[i].error = `เกิดข้อผิดพลาด: ${error.message || 'ไม่ทราบสาเหตุ'}`
+          updated[i].error = `เกิดข้อผิดพลาด: ${errorMsg || 'ไม่ทราบสาเหตุ'}`
         }
         
         console.error(`Error unlocking ${updated[i].file.name}:`, error)
