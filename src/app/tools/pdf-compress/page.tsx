@@ -150,42 +150,80 @@ export default function PDFCompressPage() {
 
       const file = pdfFiles[fileIndex].file
       const arrayBuffer = await file.arrayBuffer()
-      const pdfDoc = await PDFDocument.load(arrayBuffer, {
-        updateMetadata: false,
-        ignoreEncryption: true
-      })
 
-      // Get compression settings based on level
-      let compressionOptions: any = {
-        useObjectStreams: true,
-        addDefaultPage: false,
-      }
+      // Dynamic import PDF.js
+      const pdfjsLib = await import('pdfjs-dist')
+      pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`
+
+      // Load PDF with PDF.js
+      const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer })
+      const pdf = await loadingTask.promise
+
+      // Get quality settings based on compression level
+      let scale = 1.5
+      let quality = 0.85
+      let format: 'jpeg' | 'png' = 'jpeg'
 
       if (compressionLevel === 'low') {
-        // Low compression - faster, minimal size reduction
-        compressionOptions = {
-          ...compressionOptions,
-          objectsPerTick: 200,
-          useObjectStreams: false
-        }
+        scale = 2.0  // Higher resolution
+        quality = 0.92
+        format = 'jpeg'
       } else if (compressionLevel === 'medium') {
-        // Medium compression - balanced
-        compressionOptions = {
-          ...compressionOptions,
-          objectsPerTick: 100,
-          useObjectStreams: true
-        }
+        scale = 1.5  // Medium resolution
+        quality = 0.85
+        format = 'jpeg'
       } else {
-        // High compression - slower, maximum size reduction
-        compressionOptions = {
-          ...compressionOptions,
-          objectsPerTick: 50,
-          useObjectStreams: true
-        }
+        scale = 1.2  // Lower resolution = smaller size
+        quality = 0.75
+        format = 'jpeg'
       }
 
-      // Save with optimized compression
-      const pdfBytes = await pdfDoc.save(compressionOptions)
+      // Create new PDF
+      const newPdfDoc = await PDFDocument.create()
+
+      // Process each page
+      for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+        const page = await pdf.getPage(pageNum)
+        const viewport = page.getViewport({ scale })
+
+        const canvas = document.createElement('canvas')
+        const context = canvas.getContext('2d')
+        if (!context) continue
+
+        canvas.width = viewport.width
+        canvas.height = viewport.height
+
+        await page.render({
+          canvasContext: context,
+          viewport: viewport,
+          canvas: canvas,
+        } as any).promise
+
+        // Convert to image
+        const mimeType = format === 'jpeg' ? 'image/jpeg' : 'image/png'
+        const imgData = canvas.toDataURL(mimeType, quality)
+        const imgBytes = await fetch(imgData).then(res => res.arrayBuffer())
+
+        // Embed image
+        const image = format === 'jpeg' 
+          ? await newPdfDoc.embedJpg(imgBytes)
+          : await newPdfDoc.embedPng(imgBytes)
+
+        const newPage = newPdfDoc.addPage([viewport.width, viewport.height])
+        newPage.drawImage(image, {
+          x: 0,
+          y: 0,
+          width: viewport.width,
+          height: viewport.height
+        })
+      }
+
+      // Save compressed PDF
+      const pdfBytes = await newPdfDoc.save({
+        useObjectStreams: false,
+        addDefaultPage: false
+      })
+
       const blob = new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' })
       
       setPdfFiles(prev => {
@@ -381,9 +419,9 @@ export default function PDFCompressPage() {
                   <CardContent>
                     <div className="grid grid-cols-3 gap-3">
                       {[
-                        { value: 'low' as const, label: 'เร็ว', desc: '⚡ เร็วที่สุด • ลดขนาด 10-20%', speed: 'เร็วที่สุด' },
-                        { value: 'medium' as const, label: 'สมดุล', desc: '⚖️ แนะนำ • ลดขนาด 20-40%', speed: 'ปานกลาง' },
-                        { value: 'high' as const, label: 'สูงสุด', desc: '🎯 ช้ากว่า • ลดขนาด 40-60%', speed: 'ช้ากว่า' },
+                        { value: 'low' as const, label: 'คุณภาพสูง', desc: '⚡ เร็ว • ลดขนาด 20-30%', info: 'Scale 2.0 • JPEG 92%' },
+                        { value: 'medium' as const, label: 'สมดุล', desc: '⚖️ แนะนำ • ลดขนาด 40-50%', info: 'Scale 1.5 • JPEG 85%' },
+                        { value: 'high' as const, label: 'ขนาดเล็กสุด', desc: '🎯 ลดสูงสุด • ลดขนาด 60-70%', info: 'Scale 1.2 • JPEG 75%' },
                       ].map((level) => (
                         <button
                           key={level.value}
@@ -399,26 +437,30 @@ export default function PDFCompressPage() {
                           <p className="font-semibold text-[var(--text-primary)] mb-1">
                             {level.label}
                           </p>
-                          <p className="text-xs text-[var(--text-muted)]">
+                          <p className="text-xs text-[var(--text-muted)] mb-1">
                             {level.desc}
+                          </p>
+                          <p className="text-[10px] text-[var(--text-muted)] opacity-60">
+                            {level.info}
                           </p>
                         </button>
                       ))}
                     </div>
 
                     {/* Warning */}
-                    <div className="mt-4 p-4 rounded-xl bg-amber-500/10 border border-amber-500/20">
+                    <div className="mt-4 p-4 rounded-xl bg-blue-500/10 border border-blue-500/20">
                       <div className="flex gap-3">
-                        <div className="text-2xl">⚠️</div>
+                        <div className="text-2xl">ℹ️</div>
                         <div className="flex-1">
-                          <p className="text-sm font-semibold text-amber-600 dark:text-amber-400 mb-1">
-                            หมายเหตุสำคัญ
+                          <p className="text-sm font-semibold text-blue-600 dark:text-blue-400 mb-1">
+                            วิธีการบีบอัด
                           </p>
                           <p className="text-xs text-[var(--text-muted)] leading-relaxed">
-                            • การบีบอัดจะไม่ลดคุณภาพรูปภาพหรือข้อความ<br/>
-                            • ขนาดไฟล์ขึ้นอยู่กับเนื้อหาภายใน PDF<br/>
-                            • ไฟล์ที่มีรูปภาพคุณภาพสูงจะลดขนาดได้มากกว่า<br/>
-                            • บีบอัดหลายไฟล์พร้อมกันได้ (3 ไฟล์/รอบ)
+                            • แปลง PDF เป็นรูปภาพ แล้วบีบอัดรูปภาพ<br/>
+                            • ลดความละเอียด (resolution) ตามระดับที่เลือก<br/>
+                            • ใช้ JPEG compression สำหรับลดขนาดไฟล์<br/>
+                            • ข้อความจะกลายเป็นรูปภาพ (ไม่สามารถ copy ได้)<br/>
+                            • เหมาะสำหรับไฟล์ที่ต้องการขนาดเล็กเพื่อส่งต่อ
                           </p>
                         </div>
                       </div>
