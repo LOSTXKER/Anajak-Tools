@@ -135,15 +135,21 @@ export default function PDFCompressPage() {
   }
 
   const compressSingleFile = async (id: string) => {
-    const fileIndex = pdfFiles.findIndex(f => f.id === id)
-    if (fileIndex === -1) return
-
-    const updatedFiles = [...pdfFiles]
-    updatedFiles[fileIndex].compressing = true
-    setPdfFiles(updatedFiles)
+    setPdfFiles(prev => {
+      const updated = [...prev]
+      const fileIndex = updated.findIndex(f => f.id === id)
+      if (fileIndex !== -1) {
+        updated[fileIndex].compressing = true
+      }
+      return updated
+    })
 
     try {
-      const arrayBuffer = await updatedFiles[fileIndex].file.arrayBuffer()
+      const fileIndex = pdfFiles.findIndex(f => f.id === id)
+      if (fileIndex === -1) return
+
+      const file = pdfFiles[fileIndex].file
+      const arrayBuffer = await file.arrayBuffer()
       const pdfDoc = await PDFDocument.load(arrayBuffer, {
         updateMetadata: false,
         ignoreEncryption: true
@@ -180,19 +186,31 @@ export default function PDFCompressPage() {
 
       // Save with optimized compression
       const pdfBytes = await pdfDoc.save(compressionOptions)
-
       const blob = new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' })
       
-      updatedFiles[fileIndex].compressedBlob = blob
-      updatedFiles[fileIndex].compressedSize = blob.size
-      updatedFiles[fileIndex].compressing = false
-      updatedFiles[fileIndex].error = undefined
+      setPdfFiles(prev => {
+        const updated = [...prev]
+        const idx = updated.findIndex(f => f.id === id)
+        if (idx !== -1) {
+          updated[idx].compressedBlob = blob
+          updated[idx].compressedSize = blob.size
+          updated[idx].compressing = false
+          updated[idx].error = undefined
+        }
+        return updated
+      })
     } catch (error: any) {
-      updatedFiles[fileIndex].compressing = false
-      updatedFiles[fileIndex].error = error.message || 'เกิดข้อผิดพลาดในการบีบอัด'
+      console.error('Compression error:', error)
+      setPdfFiles(prev => {
+        const updated = [...prev]
+        const idx = updated.findIndex(f => f.id === id)
+        if (idx !== -1) {
+          updated[idx].compressing = false
+          updated[idx].error = error.message || 'เกิดข้อผิดพลาดในการบีบอัด'
+        }
+        return updated
+      })
     }
-
-    setPdfFiles(updatedFiles)
   }
 
   const compressAll = async () => {
