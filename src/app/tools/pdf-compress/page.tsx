@@ -144,14 +144,42 @@ export default function PDFCompressPage() {
 
     try {
       const arrayBuffer = await updatedFiles[fileIndex].file.arrayBuffer()
-      const pdfDoc = await PDFDocument.load(arrayBuffer)
-
-      // Save with compression
-      const pdfBytes = await pdfDoc.save({
-        useObjectStreams: compressionLevel !== 'low',
-        addDefaultPage: false,
-        objectsPerTick: compressionLevel === 'high' ? 50 : 100
+      const pdfDoc = await PDFDocument.load(arrayBuffer, {
+        updateMetadata: false,
+        ignoreEncryption: true
       })
+
+      // Get compression settings based on level
+      let compressionOptions: any = {
+        useObjectStreams: true,
+        addDefaultPage: false,
+      }
+
+      if (compressionLevel === 'low') {
+        // Low compression - faster, minimal size reduction
+        compressionOptions = {
+          ...compressionOptions,
+          objectsPerTick: 200,
+          useObjectStreams: false
+        }
+      } else if (compressionLevel === 'medium') {
+        // Medium compression - balanced
+        compressionOptions = {
+          ...compressionOptions,
+          objectsPerTick: 100,
+          useObjectStreams: true
+        }
+      } else {
+        // High compression - slower, maximum size reduction
+        compressionOptions = {
+          ...compressionOptions,
+          objectsPerTick: 50,
+          useObjectStreams: true
+        }
+      }
+
+      // Save with optimized compression
+      const pdfBytes = await pdfDoc.save(compressionOptions)
 
       const blob = new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' })
       
@@ -161,17 +189,20 @@ export default function PDFCompressPage() {
       updatedFiles[fileIndex].error = undefined
     } catch (error: any) {
       updatedFiles[fileIndex].compressing = false
-      updatedFiles[fileIndex].error = error.message
+      updatedFiles[fileIndex].error = error.message || 'เกิดข้อผิดพลาดในการบีบอัด'
     }
 
     setPdfFiles(updatedFiles)
   }
 
   const compressAll = async () => {
-    for (const file of pdfFiles) {
-      if (!file.compressedBlob && !file.compressing) {
-        await compressSingleFile(file.id)
-      }
+    // Process multiple files in parallel (batches of 3)
+    const batchSize = 3
+    const filesToCompress = pdfFiles.filter(f => !f.compressedBlob && !f.compressing)
+    
+    for (let i = 0; i < filesToCompress.length; i += batchSize) {
+      const batch = filesToCompress.slice(i, i + batchSize)
+      await Promise.all(batch.map(file => compressSingleFile(file.id)))
     }
   }
 
@@ -332,9 +363,9 @@ export default function PDFCompressPage() {
                   <CardContent>
                     <div className="grid grid-cols-3 gap-3">
                       {[
-                        { value: 'low' as const, label: 'ต่ำ', desc: 'ประหยัด 10-20%' },
-                        { value: 'medium' as const, label: 'กลาง', desc: 'ประหยัด 20-40%' },
-                        { value: 'high' as const, label: 'สูง', desc: 'ประหยัด 40-60%' },
+                        { value: 'low' as const, label: 'เร็ว', desc: '⚡ เร็วที่สุด • ลดขนาด 10-20%', speed: 'เร็วที่สุด' },
+                        { value: 'medium' as const, label: 'สมดุล', desc: '⚖️ แนะนำ • ลดขนาด 20-40%', speed: 'ปานกลาง' },
+                        { value: 'high' as const, label: 'สูงสุด', desc: '🎯 ช้ากว่า • ลดขนาด 40-60%', speed: 'ช้ากว่า' },
                       ].map((level) => (
                         <button
                           key={level.value}
@@ -355,6 +386,24 @@ export default function PDFCompressPage() {
                           </p>
                         </button>
                       ))}
+                    </div>
+
+                    {/* Warning */}
+                    <div className="mt-4 p-4 rounded-xl bg-amber-500/10 border border-amber-500/20">
+                      <div className="flex gap-3">
+                        <div className="text-2xl">⚠️</div>
+                        <div className="flex-1">
+                          <p className="text-sm font-semibold text-amber-600 dark:text-amber-400 mb-1">
+                            หมายเหตุสำคัญ
+                          </p>
+                          <p className="text-xs text-[var(--text-muted)] leading-relaxed">
+                            • การบีบอัดจะไม่ลดคุณภาพรูปภาพหรือข้อความ<br/>
+                            • ขนาดไฟล์ขึ้นอยู่กับเนื้อหาภายใน PDF<br/>
+                            • ไฟล์ที่มีรูปภาพคุณภาพสูงจะลดขนาดได้มากกว่า<br/>
+                            • บีบอัดหลายไฟล์พร้อมกันได้ (3 ไฟล์/รอบ)
+                          </p>
+                        </div>
+                      </div>
                     </div>
 
                     <div className="mt-6 space-y-3">

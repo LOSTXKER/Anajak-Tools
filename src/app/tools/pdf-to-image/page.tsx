@@ -181,10 +181,13 @@ export default function PDFToImagePage() {
   }
 
   const convertAll = async () => {
-    for (const file of pdfFiles) {
-      if (file.images.length === 0 && !file.converting) {
-        await convertSingleFile(file.id)
-      }
+    // Process multiple files in parallel (batches of 2 to avoid memory issues)
+    const batchSize = 2
+    const filesToConvert = pdfFiles.filter(f => f.images.length === 0 && !f.converting)
+    
+    for (let i = 0; i < filesToConvert.length; i += batchSize) {
+      const batch = filesToConvert.slice(i, i + batchSize)
+      await Promise.all(batch.map(file => convertSingleFile(file.id)))
     }
   }
 

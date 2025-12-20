@@ -169,12 +169,20 @@ export default function PDFMergePage() {
 
       for (const pdfFile of pdfFiles) {
         const arrayBuffer = await pdfFile.file.arrayBuffer()
-        const pdf = await PDFDocument.load(arrayBuffer)
+        const pdf = await PDFDocument.load(arrayBuffer, {
+          updateMetadata: false,
+          ignoreEncryption: true
+        })
         const copiedPages = await mergedPdf.copyPages(pdf, pdf.getPageIndices())
         copiedPages.forEach((page) => mergedPdf.addPage(page))
       }
 
-      const mergedPdfBytes = await mergedPdf.save()
+      // Save with optimization to preserve quality
+      const mergedPdfBytes = await mergedPdf.save({
+        useObjectStreams: false, // Preserve quality
+        addDefaultPage: false
+      })
+      
       const blob = new Blob([new Uint8Array(mergedPdfBytes)], { type: 'application/pdf' })
       const url = URL.createObjectURL(blob)
       

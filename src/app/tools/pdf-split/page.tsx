@@ -445,7 +445,10 @@ export default function PDFSplitPage() {
 
     try {
       const arrayBuffer = await pdfFile.arrayBuffer()
-      const pdfDoc = await PDFDocument.load(arrayBuffer)
+      const pdfDoc = await PDFDocument.load(arrayBuffer, {
+        updateMetadata: false,
+        ignoreEncryption: true
+      })
 
       if (splitMode === 'selected') {
         const selectedPages = pages.filter(p => p.selected)
@@ -461,7 +464,12 @@ export default function PDFSplitPage() {
           newPdf.addPage(copiedPage)
         }
 
-        const pdfBytes = await newPdf.save()
+        // Save with quality preservation
+        const pdfBytes = await newPdf.save({
+          useObjectStreams: false,
+          addDefaultPage: false
+        })
+        
         const blob = new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' })
         saveAs(blob, `split-${pdfFile.name}`)
       } else {
@@ -473,7 +481,12 @@ export default function PDFSplitPage() {
           const [copiedPage] = await newPdf.copyPages(pdfDoc, [page.pageNumber - 1])
           newPdf.addPage(copiedPage)
           
-          const pdfBytes = await newPdf.save()
+          // Save with quality preservation
+          const pdfBytes = await newPdf.save({
+            useObjectStreams: false,
+            addDefaultPage: false
+          })
+          
           zip.file(
             `${pdfFile.name.replace('.pdf', '')}-page-${page.pageNumber}.pdf`,
             pdfBytes

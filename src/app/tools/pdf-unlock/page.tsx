@@ -25,15 +25,6 @@ export default function PDFUnlockPage() {
   const [previewFile, setPreviewFile] = useState<File | Blob | null>(null)
   const [useGlobalPassword, setUseGlobalPassword] = useState(true)
   const [folderCount, setFolderCount] = useState(0)
-  const [pdfjsLib, setPdfjsLib] = useState<any>(null)
-
-  // Load PDF.js dynamically on client side only
-  useEffect(() => {
-    import('pdfjs-dist').then((pdfjs) => {
-      pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`
-      setPdfjsLib(pdfjs)
-    })
-  }, [])
 
   // Extract PDFs from folder (including nested folders)
   const extractPDFsFromFileList = async (items: DataTransferItemList): Promise<File[]> => {
@@ -133,76 +124,30 @@ export default function PDFUnlockPage() {
   }
 
   const unlockPDF = async (file: File, password: string): Promise<Blob> => {
-    if (!pdfjsLib) {
-      throw new Error('PDF.js is not loaded yet')
-    }
-
     const arrayBuffer = await file.arrayBuffer()
     
-    // Try to load with PDF.js first to handle password
-    const loadingTask = pdfjsLib.getDocument({
-      data: arrayBuffer,
-      password: password
-    })
-
-    // Add timeout for loading
-    const pdfDoc = await Promise.race([
-      loadingTask.promise,
-      new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Timeout: การโหลด PDF ใช้เวลานานเกินไป')), 30000)
-      )
-    ]) as any
-
-    const numPages = pdfDoc.numPages
-
-    // Create a new PDF document without password using pdf-lib
-    const newPdfDoc = await PDFDocument.create()
-
-    // Extract each page and add to new document
-    for (let pageNum = 1; pageNum <= numPages; pageNum++) {
-      const page = await pdfDoc.getPage(pageNum)
-      // Use scale 1.5 for balance between quality and speed
-      const viewport = page.getViewport({ scale: 1.5 })
-
-      // Create canvas to render page
-      const canvas = document.createElement('canvas')
-      const context = canvas.getContext('2d')
-      if (!context) {
-        throw new Error('ไม่สามารถสร้าง canvas context ได้')
-      }
-      
-      canvas.width = viewport.width
-      canvas.height = viewport.height
-
-      // Render page to canvas with timeout
-      await Promise.race([
-        page.render({
-          canvasContext: context,
-          viewport: viewport,
-          canvas: canvas,
-        } as any).promise,
-        new Promise((_, reject) => 
-          setTimeout(() => reject(new Error(`Timeout: หน้า ${pageNum} ใช้เวลานานเกินไป`)), 30000)
-        )
-      ])
-
-      // Convert canvas to image and add to new PDF (use JPEG for faster processing)
-      const imgData = canvas.toDataURL('image/jpeg', 0.92)
-      const imgBytes = await fetch(imgData).then(res => res.arrayBuffer())
-      const image = await newPdfDoc.embedJpg(imgBytes)
-      
-      const newPage = newPdfDoc.addPage([viewport.width, viewport.height])
-      newPage.drawImage(image, {
-        x: 0,
-        y: 0,
-        width: viewport.width,
-        height: viewport.height
+    try {
+      // Try to unlock directly with pdf-lib
+      const pdfDoc = await PDFDocument.load(arrayBuffer, {
+        password: password,
+        updateMetadata: false,
+        ignoreEncryption: true
       })
-    }
 
-    // Save the new PDF without password
-    const pdfBytes = await newPdfDoc.save()
-    return new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' })
+      // Save without password with quality preservation
+      const pdfBytes = await pdfDoc.save({
+        useObjectStreams: false,
+        addDefaultPage: false
+      })
+
+      return new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' })
+    } catch (error: any) {
+      // If pdf-lib fails, try alternative method
+      if (error.message?.includes('password') || error.message?.includes('encrypted')) {
+        throw new Error('รหัสผ่านไม่ถูกต้อง หรือไฟล์มีการเข้ารหัสที่ซับซ้อน')
+      }
+      throw error
+    }
   }
 
   const unlockAllWithGlobalPassword = async () => {
